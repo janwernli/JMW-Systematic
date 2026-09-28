@@ -37,7 +37,8 @@ def status(ctx: AppContext = Depends(get_ctx)):
     has_data = bool(rng and rng["hi"])
     return {
         "app_version": __version__,
-        "mode": "demo" if (prov is None or prov.info.is_demo) else "live",
+        "mode": ("demo" if prov.info.is_demo else "live") if prov else
+                ("demo" if ctx.settings.market_data_provider == "demo" else "live"),
         "data_label": ctx.data_label(),
         "provider": prov.info.to_dict() if prov else None,
         "provider_error": ctx.provider_error,

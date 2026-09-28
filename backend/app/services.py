@@ -76,7 +76,9 @@ class AppContext:
             (self.provider.info.key,)))
 
     def data_label(self) -> str:
-        return self.provider.info.data_label if self.provider else "Demo Data"
+        if self.provider:
+            return self.provider.info.data_label
+        return "Demo Data" if self.settings.market_data_provider == "demo" else "Delayed Market Data"
 
     # ------------------------------------------------------------------ backtests
     def submit_backtest(self, cfg: StrategyConfig, name: str | None) -> int:
