@@ -1,0 +1,40 @@
+# Secrets / local configuration
+.env
+.env.*
+!.env.example
+
+# Local databases and data caches (may contain licensed market data or private portfolio state)
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python
+backend/.venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Tooling / editors / OS
+.tools/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+logs/
+*.log
