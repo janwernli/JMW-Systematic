@@ -1,0 +1,20 @@
+{
+  "name": "momentum-terminal",
+  "private": true,
+  "version": "1.0.0",
+  "description": "US equities 12-1 momentum research & internal paper simulation (local only)",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node scripts/py.mjs -m app serve",
+    "dev:web": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "npm run build && node scripts/py.mjs -m app serve",
+    "test": "node scripts/py.mjs -m pytest && npm --prefix frontend run typecheck",
+    "test:backend": "node scripts/py.mjs -m pytest",
+    "import-data": "node scripts/py.mjs -m app import-data",
+    "advance": "node scripts/py.mjs -m app advance",
+    "gen:api": "node scripts/py.mjs -m app export-openapi ../frontend/src/api/openapi.json && npm --prefix frontend run gen:api"
+  }
+}

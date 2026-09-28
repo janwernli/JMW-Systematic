@@ -1,0 +1,110 @@
+:root {
+  --bg: #0b0d10;
+  --panel: #14171b;
+  --panel-2: #1a1e23;
+  --border: #252a30;
+  --border-2: #2f353c;
+  --grid: #22272d;
+  --text: #e6e8eb;
+  --text-2: #a9b0b8;
+  --muted: #7c848d;
+  --up: #3fb950;
+  --down: #f0605a;
+  --warn: #e3a008;
+  --accent: #3987e5;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+.up { color: var(--up); }
+.down { color: var(--down); }
+.warn { color: var(--warn); }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* ---------- layout ---------- */
+.page { padding: 10px 12px 24px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.page-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.page-title { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; margin: 0; }
+.page-sub { color: var(--muted); font-size: 11px; }
+.grid-12 { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; }
+.span-3 { grid-column: span 3; } .span-4 { grid-column: span 4; } .span-5 { grid-column: span 5; }
+.span-6 { grid-column: span 6; } .span-7 { grid-column: span 7; } .span-8 { grid-column: span 8; }
+.span-9 { grid-column: span 9; } .span-12 { grid-column: span 12; }
+@media (max-width: 1100px) {
+  .span-3, .span-4, .span-5, .span-6, .span-7, .span-8, .span-9 { grid-column: span 12; }
+}
+
+/* ---------- panels ---------- */
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; min-width: 0; display: flex; flex-direction: column; }
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid var(--border); min-height: 32px;
+}
+.panel-title { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-body { padding: 8px 10px; flex: 1; min-width: 0; }
+.info-tip { color: var(--muted); display: inline-flex; cursor: help; }
+.info-tip:hover, .info-tip:focus { color: var(--text); outline: none; }
+.data-label { letter-spacing: 0.04em; }
+
+/* ---------- KPI strip ---------- */
+.kpi-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.kpi { background: var(--panel); padding: 7px 10px 8px; min-width: 0; }
+.kpi-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display: flex; gap: 4px; align-items: center; white-space: nowrap; }
+.kpi-value { font-size: 18px; font-weight: 600; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: 10.5px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- tables ---------- */
+.dt-wrap { overflow: auto; border-top: 1px solid var(--border); }
+.dt { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.dt th {
+  position: sticky; top: 0; z-index: 1; background: var(--panel-2); color: var(--muted);
+  font-weight: 600; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 6px 8px; border-bottom: 1px solid var(--border-2); white-space: nowrap; user-select: none;
+}
+.dt th.sortable { cursor: pointer; }
+.dt th.sortable:hover { color: var(--text); }
+.dt td { padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+.dt.dense td { padding: 4px 8px; }
+.dt td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 11px; }
+.dt tr.clickable { cursor: pointer; }
+.dt tbody tr:hover td { background: #1b2026; }
+.dt tr.row-held td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.dt tr.row-dim td { color: var(--muted); }
+.dt-empty { text-align: center; color: var(--muted); padding: 18px !important; }
+.th-tip { border-bottom: 1px dotted var(--muted); }
+
+/* ---------- misc ---------- */
+.state-view { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 28px 12px; min-height: 120px; }
+.kv { margin: 0; display: grid; gap: 0; font-size: 11.5px; }
+.kv-row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--grid); }
+.kv-row:last-child { border-bottom: none; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.chart-note { font-size: 10.5px; color: var(--muted); margin-top: 4px; }
+.demo-ribbon {
+  background: repeating-linear-gradient(135deg, #3a2e0b 0 10px, #33290a 10px 20px);
+  color: #f5d67a; font-size: 11px; text-align: center; padding: 3px 8px; letter-spacing: 0.04em;
+  border-bottom: 1px solid #5a4712;
+}
+.survivor-ribbon { background: #3b1414; color: #ffb4ae; font-size: 11px; text-align: center; padding: 4px 8px; border-bottom: 1px solid #6b2020; }
+.clock { font-family: var(--mono); font-size: 11px; color: var(--text-2); }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.nav-link-active { background: #1d2329 !important; box-shadow: inset 2px 0 0 var(--accent); }
+.heat td { text-align: center; font-family: var(--mono); font-size: 10.5px; padding: 3px 2px; border: 2px solid var(--panel); border-radius: 3px; }
+.heat th { font-size: 10px; color: var(--muted); font-weight: 500; padding: 2px; }
+.check-row { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid var(--grid); font-size: 11.5px; }
+.check-row:last-child { border-bottom: none; }
+.recon { font-family: var(--mono); font-size: 11.5px; width: 100%; border-collapse: collapse; }
+.recon td { padding: 3px 0; }
+.recon td:last-child { text-align: right; }
+.recon tr.total td { border-top: 1px solid var(--border-2); font-weight: 600; padding-top: 5px; }

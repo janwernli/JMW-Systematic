@@ -1,0 +1,160 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { notifications } from "@mantine/notifications";
+import { api, ApiError, type S, type StrategyConfig } from "./client";
+
+export const useStatus = () =>
+  useQuery({ queryKey: ["status"], queryFn: () => api.get<S["SystemStatus"]>("/status"), refetchInterval: 30_000 });
+
+export const useQuality = () =>
+  useQuery({ queryKey: ["quality"], queryFn: () => api.get<S["DataQuality"]>("/data/quality"), refetchInterval: 60_000 });
+
+export const useImports = () =>
+  useQuery({ queryKey: ["imports"], queryFn: () => api.get<S["DataImport"][]>("/data/imports"), refetchInterval: 10_000 });
+
+export const useSummary = () =>
+  useQuery({ queryKey: ["summary"], queryFn: () => api.get<S["CommandCenter"]>("/portfolio/summary") });
+
+export const usePositions = (enabled = true) =>
+  useQuery({ queryKey: ["positions"], queryFn: () => api.get<S["PositionsResponse"]>("/portfolio/positions"), enabled });
+
+export const useUniverse = (session?: string | null) =>
+  useQuery({
+    queryKey: ["universe", session ?? "latest"],
+    queryFn: () => api.get<S["UniverseResponse"]>(`/universe${session ? `?session=${session}` : ""}`),
+  });
+
+export const useStock = (symbol: string | null, session?: string | null) =>
+  useQuery({
+    queryKey: ["stock", symbol, session ?? "latest"],
+    queryFn: () => api.get<S["StockDetail"]>(`/universe/${symbol}${session ? `?session=${session}` : ""}`),
+    enabled: !!symbol,
+  });
+
+export const usePlans = () =>
+  useQuery({ queryKey: ["plans"], queryFn: () => api.get<S["PlanSummary"][]>("/rebalance/plans") });
+
+export const usePlan = (id: number | null) =>
+  useQuery({
+    queryKey: ["plan", id ?? "current"],
+    queryFn: () =>
+      id ? api.get<S["PlanDetail"]>(`/rebalance/plans/${id}`) : api.get<S["PlanDetail"] | null>("/rebalance/current"),
+  });
+
+export const usePaperConfig = (enabled = true) =>
+  useQuery({ queryKey: ["paperConfig"], queryFn: () => api.get<S["PaperConfigResponse"]>("/paper/config"), enabled });
+
+export const useResearchDefaults = () =>
+  useQuery({ queryKey: ["researchDefaults"], queryFn: () => api.get<S["ResearchDefaults"]>("/research/defaults") });
+
+export const useRuns = () =>
+  useQuery({
+    queryKey: ["runs"],
+    queryFn: () => api.get<S["RunSummary"][]>("/research/runs"),
+    refetchInterval: (q) => (q.state.data?.some((r) => r.status === "queued" || r.status === "running") ? 800 : false),
+  });
+
+export const useRun = (id: number | null) =>
+  useQuery({
+    queryKey: ["run", id],
+    queryFn: () => api.get<S["RunDetail"]>(`/research/runs/${id}`),
+    enabled: id != null,
+    refetchInterval: (q) => (q.state.data && ["queued", "running"].includes(q.state.data.status) ? 800 : false),
+  });
+
+export const useRunSeries = (id: number | null, ready: boolean) =>
+  useQuery({
+    queryKey: ["runSeries", id],
+    queryFn: () => api.get<S["RunSeriesPoint"][]>(`/research/runs/${id}/series`),
+    enabled: id != null && ready,
+    staleTime: Infinity,
+  });
+
+export const useRunMonthly = (id: number | null, ready: boolean) =>
+  useQuery({
+    queryKey: ["runMonthly", id],
+    queryFn: () => api.get<S["MonthlyReturn"][]>(`/research/runs/${id}/monthly`),
+    enabled: id != null && ready,
+    staleTime: Infinity,
+  });
+
+export const useRunTrades = (id: number | null, ready: boolean, offset: number, symbol: string) =>
+  useQuery({
+    queryKey: ["runTrades", id, offset, symbol],
+    queryFn: () =>
+      api.get<S["FillsPage"]>(`/research/runs/${id}/trades?limit=100&offset=${offset}${symbol ? `&symbol=${symbol}` : ""}`),
+    enabled: id != null && ready,
+  });
+
+export const useRunRebalances = (id: number | null, ready: boolean) =>
+  useQuery({
+    queryKey: ["runRebalances", id],
+    queryFn: () => api.get<S["RunRebalance"][]>(`/research/runs/${id}/rebalances`),
+    enabled: id != null && ready,
+    staleTime: Infinity,
+  });
+
+export function useLedgerPage<T>(kind: "orders" | "fills" | "cash" | "events", offset: number, extra = "") {
+  return useQuery({
+    queryKey: ["ledger", kind, offset, extra],
+    queryFn: () => api.get<T>(`/ledger/${kind}?limit=100&offset=${offset}${extra}`),
+  });
+}
+
+export const useRepro = () =>
+  useQuery({ queryKey: ["repro"], queryFn: () => api.get<S["Reproducibility"]>("/ledger/reproducibility") });
+
+// ------------------------------------------------------------------ mutations
+function onError(e: unknown) {
+  const msg = e instanceof ApiError ? e.message : String(e);
+  notifications.show({ color: "red", title: "Request failed", message: msg, autoClose: 8000 });
+}
+
+export function usePaperMutations() {
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries();
+  const opts = { onError, onSuccess: refresh };
+  return {
+    advance: useMutation({
+      mutationFn: (body: S["PaperAdvanceRequest"]) => api.post<S["AdvanceResponse"]>("/paper/advance", body),
+      onError,
+      onSuccess: (r: S["AdvanceResponse"]) => {
+        refresh();
+        notifications.show({
+          color: r.stopped_reason === "decision_required" ? "yellow" : "blue",
+          title: `Processed ${r.processed_count} session(s) - as of ${r.as_of}`,
+          message: r.stopped_explanation,
+          autoClose: 7000,
+        });
+      },
+    }),
+    init: useMutation({ mutationFn: (body: S["PaperInitRequest"]) => api.post<S["PortfolioMeta"]>("/paper/init", body), ...opts }),
+    reset: useMutation({ mutationFn: () => api.post<{ message: string }>("/paper/reset"), ...opts }),
+    reseed: useMutation({ mutationFn: () => api.post<{ message: string }>("/paper/seed-demo"), ...opts }),
+    apply: useMutation({ mutationFn: (id: number) => api.post<S["PlanDetail"]>(`/rebalance/plans/${id}/apply`), ...opts }),
+    skip: useMutation({
+      mutationFn: (v: { id: number; note?: string }) => api.post<S["PlanDetail"]>(`/rebalance/plans/${v.id}/skip`, { note: v.note }),
+      ...opts,
+    }),
+    updateConfig: useMutation({
+      mutationFn: (cfg: StrategyConfig) => api.put<S["PaperConfigResponse"]>("/paper/config", cfg),
+      ...opts,
+    }),
+    refreshData: useMutation({
+      mutationFn: () => api.post<{ started: boolean; message: string }>("/data/refresh"),
+      onError,
+      onSuccess: (r: { message: string }) => {
+        notifications.show({ color: "blue", title: "Data refresh", message: r.message });
+        setTimeout(refresh, 1500);
+      },
+    }),
+  };
+}
+
+export function useLaunchRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: S["RunRequest"]) => api.post<S["RunSummary"]>("/research/runs", body),
+    onError,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["runs"] }),
+  });
+}
