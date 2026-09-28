@@ -1,0 +1,5377 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Momentum Terminal API",
+    "description": "US equities 12-1 momentum research and INTERNAL paper simulation. No brokerage connectivity.",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/status": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Status",
+        "operationId": "status_api_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/quality": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Data Quality",
+        "operationId": "data_quality_api_data_quality_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataQuality"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/imports": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Imports",
+        "operationId": "imports_api_data_imports_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DataImport"
+                  },
+                  "type": "array",
+                  "title": "Response Imports Api Data Imports Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/data/refresh": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Refresh",
+        "description": "Re-import from the configured provider in the background (idempotent upserts).\n\nLive providers fetch from 10 sessions before the latest stored session, so late\ncorrections are picked up; the demo fixture is simply re-imported.",
+        "operationId": "refresh_api_data_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/universe": {
+      "get": {
+        "tags": [
+          "universe"
+        ],
+        "summary": "Universe",
+        "operationId": "universe_api_universe_get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Signal session (default: latest stored session)",
+              "title": "Session"
+            },
+            "description": "Signal session (default: latest stored session)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UniverseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/universe/{symbol}": {
+      "get": {
+        "tags": [
+          "universe"
+        ],
+        "summary": "Stock Detail",
+        "operationId": "stock_detail_api_universe__symbol__get",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Symbol"
+            }
+          },
+          {
+            "name": "session",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/portfolio/summary": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Command Center",
+        "operationId": "command_center_api_portfolio_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandCenter"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/portfolio/positions": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Positions",
+        "operationId": "positions_api_portfolio_positions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PositionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/init": {
+      "post": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Paper Init",
+        "operationId": "paper_init_api_paper_init_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperInitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioMeta"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/advance": {
+      "post": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Paper Advance",
+        "operationId": "paper_advance_api_paper_advance_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperAdvanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvanceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/reset": {
+      "post": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Paper Reset",
+        "operationId": "paper_reset_api_paper_reset_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Paper Reset Api Paper Reset Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/config": {
+      "get": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Paper Config",
+        "operationId": "paper_config_api_paper_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Paper Config Update",
+        "operationId": "paper_config_update_api_paper_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StrategyConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/seed-demo": {
+      "post": {
+        "tags": [
+          "portfolio"
+        ],
+        "summary": "Reseed Demo",
+        "description": "Recreate the demo portfolio (archiving the current one). Demo mode only.",
+        "operationId": "reseed_demo_api_paper_seed_demo_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Reseed Demo Api Paper Seed Demo Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rebalance/plans": {
+      "get": {
+        "tags": [
+          "rebalance"
+        ],
+        "summary": "Plans",
+        "operationId": "plans_api_rebalance_plans_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlanSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Plans Api Rebalance Plans Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rebalance/current": {
+      "get": {
+        "tags": [
+          "rebalance"
+        ],
+        "summary": "Current",
+        "operationId": "current_api_rebalance_current_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/PlanDetail"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Current Api Rebalance Current Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rebalance/plans/{plan_id}": {
+      "get": {
+        "tags": [
+          "rebalance"
+        ],
+        "summary": "Plan Detail",
+        "operationId": "plan_detail_api_rebalance_plans__plan_id__get",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Plan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rebalance/plans/{plan_id}/apply": {
+      "post": {
+        "tags": [
+          "rebalance"
+        ],
+        "summary": "Apply",
+        "description": "Apply the plan to the INTERNAL VIRTUAL PORTFOLIO ONLY. Nothing is sent to any broker.",
+        "operationId": "apply_api_rebalance_plans__plan_id__apply_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Plan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rebalance/plans/{plan_id}/skip": {
+      "post": {
+        "tags": [
+          "rebalance"
+        ],
+        "summary": "Skip",
+        "operationId": "skip_api_rebalance_plans__plan_id__skip_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Plan Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/defaults": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Defaults",
+        "operationId": "defaults_api_research_defaults_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResearchDefaults"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/runs": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Runs",
+        "operationId": "runs_api_research_runs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Runs Api Research Runs Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Launch",
+        "operationId": "launch_api_research_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Run Detail",
+        "operationId": "run_detail_api_research_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/runs/{run_id}/series": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Run Series",
+        "operationId": "run_series_api_research_runs__run_id__series_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunSeriesPoint"
+                  },
+                  "title": "Response Run Series Api Research Runs  Run Id  Series Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/runs/{run_id}/monthly": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Run Monthly",
+        "operationId": "run_monthly_api_research_runs__run_id__monthly_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MonthlyReturn"
+                  },
+                  "title": "Response Run Monthly Api Research Runs  Run Id  Monthly Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/runs/{run_id}/trades": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Run Trades",
+        "operationId": "run_trades_api_research_runs__run_id__trades_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 5000,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Symbol"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillsPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/runs/{run_id}/rebalances": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Run Rebalances",
+        "operationId": "run_rebalances_api_research_runs__run_id__rebalances_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RunRebalance"
+                  },
+                  "title": "Response Run Rebalances Api Research Runs  Run Id  Rebalances Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ledger/orders": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Orders",
+        "operationId": "orders_api_ledger_orders_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrdersPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ledger/fills": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Fills",
+        "operationId": "fills_api_ledger_fills_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillsPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ledger/cash": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Cash",
+        "operationId": "cash_api_ledger_cash_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CashPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ledger/events": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Events",
+        "operationId": "events_api_ledger_events_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ledger/reproducibility": {
+      "get": {
+        "tags": [
+          "ledger"
+        ],
+        "summary": "Reproducibility",
+        "operationId": "reproducibility_api_ledger_reproducibility_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reproducibility"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdvanceResponse": {
+        "properties": {
+          "processed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Processed"
+          },
+          "processed_count": {
+            "type": "integer",
+            "title": "Processed Count"
+          },
+          "as_of": {
+            "type": "string",
+            "title": "As Of"
+          },
+          "stopped_reason": {
+            "type": "string",
+            "title": "Stopped Reason"
+          },
+          "stopped_explanation": {
+            "type": "string",
+            "title": "Stopped Explanation"
+          },
+          "pending_plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Plan Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "processed",
+          "processed_count",
+          "as_of",
+          "stopped_reason",
+          "stopped_explanation",
+          "pending_plan_id"
+        ],
+        "title": "AdvanceResponse"
+      },
+      "CashPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CashTx"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "rows"
+        ],
+        "title": "CashPage"
+      },
+      "CashTx": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "balance_after": {
+            "type": "number",
+            "title": "Balance After"
+          },
+          "fill_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Id"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session",
+          "kind",
+          "symbol",
+          "amount",
+          "balance_after",
+          "fill_id",
+          "note",
+          "created_at"
+        ],
+        "title": "CashTx"
+      },
+      "CommandCenter": {
+        "properties": {
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "portfolio": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "valuation_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valuation Session"
+          },
+          "nav": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nav"
+          },
+          "cash": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash"
+          },
+          "invested": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invested"
+          },
+          "positions": {
+            "type": "integer",
+            "title": "Positions"
+          },
+          "daily_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Return"
+          },
+          "daily_pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Pnl"
+          },
+          "inception_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inception Return"
+          },
+          "gross_inception_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gross Inception Return"
+          },
+          "benchmark_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Symbol"
+          },
+          "benchmark_return_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Return Basis"
+          },
+          "benchmark_inception_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Inception Return"
+          },
+          "return_difference": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return Difference"
+          },
+          "drawdown": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drawdown"
+          },
+          "max_drawdown": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Drawdown"
+          },
+          "next_rebalance": {
+            "$ref": "#/components/schemas/NextRebalance"
+          },
+          "nav_series": {
+            "items": {
+              "$ref": "#/components/schemas/NavPoint"
+            },
+            "type": "array",
+            "title": "Nav Series"
+          },
+          "top_movers": {
+            "items": {
+              "$ref": "#/components/schemas/Mover"
+            },
+            "type": "array",
+            "title": "Top Movers"
+          },
+          "recent_fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillModel"
+            },
+            "type": "array",
+            "title": "Recent Fills"
+          },
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/EventModel"
+            },
+            "type": "array",
+            "title": "Alerts"
+          },
+          "data_is_stale": {
+            "type": "boolean",
+            "title": "Data Is Stale"
+          },
+          "data_stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Stale Reason"
+          },
+          "data_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_label",
+          "portfolio",
+          "valuation_session",
+          "nav",
+          "cash",
+          "invested",
+          "positions",
+          "daily_return",
+          "daily_pnl",
+          "inception_return",
+          "gross_inception_return",
+          "benchmark_symbol",
+          "benchmark_return_basis",
+          "benchmark_inception_return",
+          "return_difference",
+          "drawdown",
+          "max_drawdown",
+          "next_rebalance",
+          "nav_series",
+          "top_movers",
+          "recent_fills",
+          "alerts",
+          "data_is_stale",
+          "data_stale_reason",
+          "data_end"
+        ],
+        "title": "CommandCenter"
+      },
+      "Concentration": {
+        "properties": {
+          "top5_weight": {
+            "type": "number",
+            "title": "Top5 Weight"
+          },
+          "top10_weight": {
+            "type": "number",
+            "title": "Top10 Weight"
+          },
+          "largest_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Largest Symbol"
+          },
+          "largest_weight": {
+            "type": "number",
+            "title": "Largest Weight"
+          },
+          "hhi": {
+            "type": "number",
+            "title": "Hhi"
+          },
+          "effective_n": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective N"
+          }
+        },
+        "type": "object",
+        "required": [
+          "top5_weight",
+          "top10_weight",
+          "largest_symbol",
+          "largest_weight",
+          "hhi",
+          "effective_n"
+        ],
+        "title": "Concentration"
+      },
+      "CorporateActionModel": {
+        "properties": {
+          "ex_date": {
+            "type": "string",
+            "title": "Ex Date"
+          },
+          "action_type": {
+            "type": "string",
+            "title": "Action Type"
+          },
+          "ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ratio"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ex_date",
+          "action_type",
+          "ratio",
+          "amount"
+        ],
+        "title": "CorporateActionModel"
+      },
+      "DataImport": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "feed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feed"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "requested_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Start"
+          },
+          "requested_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested End"
+          },
+          "coverage_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Start"
+          },
+          "coverage_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage End"
+          },
+          "symbols_requested": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbols Requested"
+          },
+          "symbols_loaded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbols Loaded"
+          },
+          "bars_loaded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bars Loaded"
+          },
+          "actions_loaded": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actions Loaded"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "feed",
+          "started_at",
+          "finished_at",
+          "status",
+          "requested_start",
+          "requested_end",
+          "coverage_start",
+          "coverage_end",
+          "symbols_requested",
+          "symbols_loaded",
+          "bars_loaded",
+          "actions_loaded",
+          "warnings",
+          "error"
+        ],
+        "title": "DataImport"
+      },
+      "DataQuality": {
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/ProviderInfoModel"
+          },
+          "has_data": {
+            "type": "boolean",
+            "title": "Has Data"
+          },
+          "latest_import": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DataImport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_successful_import": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DataImport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverage_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Start"
+          },
+          "coverage_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage End"
+          },
+          "expected_latest_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Latest Session"
+          },
+          "is_stale": {
+            "type": "boolean",
+            "title": "Is Stale"
+          },
+          "stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale Reason"
+          },
+          "instruments": {
+            "type": "integer",
+            "title": "Instruments"
+          },
+          "universe_count": {
+            "type": "integer",
+            "title": "Universe Count"
+          },
+          "eligible_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eligible Count"
+          },
+          "total_bars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bars"
+          },
+          "missing_bars": {
+            "type": "integer",
+            "title": "Missing Bars"
+          },
+          "missing_opens": {
+            "type": "integer",
+            "title": "Missing Opens"
+          },
+          "stale_symbols": {
+            "items": {
+              "$ref": "#/components/schemas/StaleSymbol"
+            },
+            "type": "array",
+            "title": "Stale Symbols"
+          },
+          "latest_session_coverage": {
+            "type": "number",
+            "title": "Latest Session Coverage"
+          },
+          "benchmark_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Symbol"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/QualityWarning"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "has_data",
+          "latest_import",
+          "latest_successful_import",
+          "coverage_start",
+          "coverage_end",
+          "expected_latest_session",
+          "is_stale",
+          "stale_reason",
+          "instruments",
+          "universe_count",
+          "missing_bars",
+          "missing_opens",
+          "stale_symbols",
+          "latest_session_coverage",
+          "warnings",
+          "generated_at"
+        ],
+        "title": "DataQuality"
+      },
+      "EventModel": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "ts": {
+            "type": "string",
+            "title": "Ts"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "title": "Level"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "portfolio_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ts",
+          "level",
+          "category",
+          "message",
+          "portfolio_id",
+          "run_id",
+          "session",
+          "payload"
+        ],
+        "title": "EventModel"
+      },
+      "EventsPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/EventModel"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "rows"
+        ],
+        "title": "EventsPage"
+      },
+      "FillModel": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "title": "Side"
+          },
+          "shares": {
+            "type": "integer",
+            "title": "Shares"
+          },
+          "ref_price": {
+            "type": "number",
+            "title": "Ref Price"
+          },
+          "fill_price": {
+            "type": "number",
+            "title": "Fill Price"
+          },
+          "gross_value": {
+            "type": "number",
+            "title": "Gross Value"
+          },
+          "slippage_cost": {
+            "type": "number",
+            "title": "Slippage Cost"
+          },
+          "commission": {
+            "type": "number",
+            "title": "Commission"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "session",
+          "symbol",
+          "side",
+          "shares",
+          "ref_price",
+          "fill_price",
+          "gross_value",
+          "slippage_cost",
+          "commission"
+        ],
+        "title": "FillModel"
+      },
+      "FillsPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/FillModel"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "rows"
+        ],
+        "title": "FillsPage"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MarketClock": {
+        "properties": {
+          "now_utc": {
+            "type": "string",
+            "title": "Now Utc"
+          },
+          "now_new_york": {
+            "type": "string",
+            "title": "Now New York"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed",
+              "pre_open",
+              "after_close"
+            ],
+            "title": "Status"
+          },
+          "session_today": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Today"
+          },
+          "next_open_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Open Utc"
+          },
+          "next_close_utc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Close Utc"
+          },
+          "calendar": {
+            "type": "string",
+            "title": "Calendar"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "now_utc",
+          "now_new_york",
+          "status",
+          "session_today",
+          "next_open_utc",
+          "next_close_utc",
+          "calendar",
+          "source"
+        ],
+        "title": "MarketClock"
+      },
+      "MonthlyReturn": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "month": {
+            "type": "integer",
+            "title": "Month"
+          },
+          "strategy": {
+            "type": "number",
+            "title": "Strategy"
+          },
+          "benchmark": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark"
+          }
+        },
+        "type": "object",
+        "required": [
+          "year",
+          "month",
+          "strategy",
+          "benchmark"
+        ],
+        "title": "MonthlyReturn"
+      },
+      "Mover": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "return_1d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return 1D"
+          },
+          "pnl_1d": {
+            "type": "number",
+            "title": "Pnl 1D"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "return_1d",
+          "pnl_1d",
+          "weight"
+        ],
+        "title": "Mover"
+      },
+      "NavPoint": {
+        "properties": {
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "nav": {
+            "type": "number",
+            "title": "Nav"
+          },
+          "gross_nav": {
+            "type": "number",
+            "title": "Gross Nav"
+          },
+          "cash": {
+            "type": "number",
+            "title": "Cash"
+          },
+          "benchmark_nav": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Nav"
+          },
+          "drawdown": {
+            "type": "number",
+            "title": "Drawdown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session",
+          "nav",
+          "gross_nav",
+          "cash",
+          "benchmark_nav",
+          "drawdown"
+        ],
+        "title": "NavPoint"
+      },
+      "NextRebalance": {
+        "properties": {
+          "signal_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal Session"
+          },
+          "fill_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Session"
+          },
+          "pending_plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Plan Id"
+          },
+          "pending_plan_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Plan Status"
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "signal_session",
+          "fill_session",
+          "pending_plan_id",
+          "pending_plan_status",
+          "blocked_reason"
+        ],
+        "title": "NextRebalance"
+      },
+      "OrderModel": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "plan_id": {
+            "type": "integer",
+            "title": "Plan Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "intended_side": {
+            "type": "string",
+            "title": "Intended Side"
+          },
+          "target_weight": {
+            "type": "number",
+            "title": "Target Weight"
+          },
+          "est_shares": {
+            "type": "integer",
+            "title": "Est Shares"
+          },
+          "fill_session": {
+            "type": "string",
+            "title": "Fill Session"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "filled_shares": {
+            "type": "integer",
+            "title": "Filled Shares"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "plan_id",
+          "symbol",
+          "intended_side",
+          "target_weight",
+          "est_shares",
+          "fill_session",
+          "status",
+          "status_reason",
+          "filled_shares",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "OrderModel"
+      },
+      "OrdersPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/OrderModel"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "rows"
+        ],
+        "title": "OrdersPage"
+      },
+      "PaperAdvanceRequest": {
+        "properties": {
+          "until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until",
+            "description": "Last session to process (default: latest stored data)"
+          },
+          "max_sessions": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 10000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Sessions"
+          }
+        },
+        "type": "object",
+        "title": "PaperAdvanceRequest"
+      },
+      "PaperConfigResponse": {
+        "properties": {
+          "config_id": {
+            "type": "integer",
+            "title": "Config Id"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "history": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "History"
+          }
+        },
+        "type": "object",
+        "required": [
+          "config_id",
+          "config",
+          "history"
+        ],
+        "title": "PaperConfigResponse"
+      },
+      "PaperInitRequest": {
+        "properties": {
+          "inception_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inception Session",
+            "description": "Session at whose close cash is funded; default latest data session"
+          },
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StrategyConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "title": "PaperInitRequest"
+      },
+      "PlanDetail": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "signal_session": {
+            "type": "string",
+            "title": "Signal Session"
+          },
+          "fill_session": {
+            "type": "string",
+            "title": "Fill Session"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "applied",
+              "executed",
+              "skipped",
+              "blocked"
+            ],
+            "title": "Status"
+          },
+          "block_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Reason"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "est_turnover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Est Turnover"
+          },
+          "realized_turnover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Turnover"
+          },
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "data_version": {
+            "type": "string",
+            "title": "Data Version"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "estimate": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Estimate"
+          },
+          "execution": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/RuleCheck"
+            },
+            "type": "array",
+            "title": "Checks"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/PlanOrderModel"
+            },
+            "type": "array",
+            "title": "Orders"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/PlanTarget"
+            },
+            "type": "array",
+            "title": "Targets"
+          },
+          "fills": {
+            "items": {
+              "$ref": "#/components/schemas/FillModel"
+            },
+            "type": "array",
+            "title": "Fills"
+          },
+          "can_apply": {
+            "type": "boolean",
+            "title": "Can Apply"
+          },
+          "apply_disabled_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apply Disabled Reason"
+          },
+          "portfolio_as_of": {
+            "type": "string",
+            "title": "Portfolio As Of"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "signal_session",
+          "fill_session",
+          "status",
+          "block_reason",
+          "created_at",
+          "decided_at",
+          "executed_at",
+          "selected_count",
+          "est_turnover",
+          "realized_turnover",
+          "data_label",
+          "data_version",
+          "config",
+          "estimate",
+          "execution",
+          "checks",
+          "orders",
+          "targets",
+          "fills",
+          "can_apply",
+          "apply_disabled_reason",
+          "portfolio_as_of"
+        ],
+        "title": "PlanDetail"
+      },
+      "PlanOrderModel": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ],
+            "title": "Side"
+          },
+          "current_shares": {
+            "type": "integer",
+            "title": "Current Shares"
+          },
+          "target_shares": {
+            "type": "integer",
+            "title": "Target Shares"
+          },
+          "est_shares": {
+            "type": "integer",
+            "title": "Est Shares"
+          },
+          "est_price": {
+            "type": "number",
+            "title": "Est Price"
+          },
+          "est_value": {
+            "type": "number",
+            "title": "Est Value"
+          },
+          "est_cost": {
+            "type": "number",
+            "title": "Est Cost"
+          },
+          "current_weight": {
+            "type": "number",
+            "title": "Current Weight"
+          },
+          "target_weight": {
+            "type": "number",
+            "title": "Target Weight"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "order_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Status"
+          },
+          "filled_shares": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filled Shares"
+          },
+          "order_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "symbol",
+          "side",
+          "current_shares",
+          "target_shares",
+          "est_shares",
+          "est_price",
+          "est_value",
+          "est_cost",
+          "current_weight",
+          "target_weight",
+          "note"
+        ],
+        "title": "PlanOrderModel"
+      },
+      "PlanSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "signal_session": {
+            "type": "string",
+            "title": "Signal Session"
+          },
+          "fill_session": {
+            "type": "string",
+            "title": "Fill Session"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "applied",
+              "executed",
+              "skipped",
+              "blocked"
+            ],
+            "title": "Status"
+          },
+          "block_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Reason"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "est_turnover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Est Turnover"
+          },
+          "realized_turnover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realized Turnover"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "signal_session",
+          "fill_session",
+          "status",
+          "block_reason",
+          "created_at",
+          "decided_at",
+          "executed_at",
+          "selected_count",
+          "est_turnover",
+          "realized_turnover"
+        ],
+        "title": "PlanSummary"
+      },
+      "PlanTarget": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank"
+          },
+          "momentum": {
+            "type": "number",
+            "title": "Momentum"
+          },
+          "close_raw": {
+            "type": "number",
+            "title": "Close Raw"
+          },
+          "adv20": {
+            "type": "number",
+            "title": "Adv20"
+          },
+          "target_weight": {
+            "type": "number",
+            "title": "Target Weight"
+          },
+          "current_weight": {
+            "type": "number",
+            "title": "Current Weight"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "rank",
+          "momentum",
+          "close_raw",
+          "adv20",
+          "target_weight",
+          "current_weight"
+        ],
+        "title": "PlanTarget"
+      },
+      "PortfolioMeta": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "initial_capital": {
+            "type": "number",
+            "title": "Initial Capital"
+          },
+          "cash": {
+            "type": "number",
+            "title": "Cash"
+          },
+          "inception_session": {
+            "type": "string",
+            "title": "Inception Session"
+          },
+          "as_of_session": {
+            "type": "string",
+            "title": "As Of Session"
+          },
+          "config_id": {
+            "type": "integer",
+            "title": "Config Id"
+          },
+          "cum_costs": {
+            "type": "number",
+            "title": "Cum Costs"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "provider",
+          "status",
+          "initial_capital",
+          "cash",
+          "inception_session",
+          "as_of_session",
+          "config_id",
+          "cum_costs",
+          "created_at",
+          "notes"
+        ],
+        "title": "PortfolioMeta"
+      },
+      "PositionRow": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          },
+          "shares": {
+            "type": "integer",
+            "title": "Shares"
+          },
+          "mark_price": {
+            "type": "number",
+            "title": "Mark Price"
+          },
+          "mark_session": {
+            "type": "string",
+            "title": "Mark Session"
+          },
+          "stale_mark": {
+            "type": "boolean",
+            "title": "Stale Mark"
+          },
+          "market_value": {
+            "type": "number",
+            "title": "Market Value"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight"
+          },
+          "target_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Weight"
+          },
+          "drift": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift"
+          },
+          "cost_basis": {
+            "type": "number",
+            "title": "Cost Basis"
+          },
+          "unrealized_pnl": {
+            "type": "number",
+            "title": "Unrealized Pnl"
+          },
+          "unrealized_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pct"
+          },
+          "contribution": {
+            "type": "number",
+            "title": "Contribution",
+            "description": "Unrealized P&L / NAV"
+          },
+          "return_1d": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return 1D"
+          },
+          "opened_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened Session"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "name",
+          "sector",
+          "shares",
+          "mark_price",
+          "mark_session",
+          "stale_mark",
+          "market_value",
+          "weight",
+          "target_weight",
+          "drift",
+          "cost_basis",
+          "unrealized_pnl",
+          "unrealized_pct",
+          "contribution",
+          "return_1d",
+          "opened_session"
+        ],
+        "title": "PositionRow"
+      },
+      "PositionsResponse": {
+        "properties": {
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "valuation_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valuation Session"
+          },
+          "valuation_note": {
+            "type": "string",
+            "title": "Valuation Note"
+          },
+          "nav": {
+            "type": "number",
+            "title": "Nav"
+          },
+          "cash": {
+            "type": "number",
+            "title": "Cash"
+          },
+          "cash_weight": {
+            "type": "number",
+            "title": "Cash Weight"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/PositionRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          },
+          "sector_exposure": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SectorExposure"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector Exposure"
+          },
+          "sector_note": {
+            "type": "string",
+            "title": "Sector Note"
+          },
+          "concentration": {
+            "$ref": "#/components/schemas/Concentration"
+          },
+          "plan_signal_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Signal Session"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_label",
+          "valuation_session",
+          "valuation_note",
+          "nav",
+          "cash",
+          "cash_weight",
+          "rows",
+          "sector_exposure",
+          "sector_note",
+          "concentration",
+          "plan_signal_session"
+        ],
+        "title": "PositionsResponse"
+      },
+      "PricePoint": {
+        "properties": {
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "open": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open"
+          },
+          "high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low"
+          },
+          "close": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          },
+          "tr_index": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tr Index"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume",
+          "tr_index"
+        ],
+        "title": "PricePoint"
+      },
+      "ProviderInfoModel": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "feed": {
+            "type": "string",
+            "title": "Feed"
+          },
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "is_demo": {
+            "type": "boolean",
+            "title": "Is Demo"
+          },
+          "benchmark_symbol": {
+            "type": "string",
+            "title": "Benchmark Symbol"
+          },
+          "benchmark_return_basis": {
+            "type": "string",
+            "title": "Benchmark Return Basis"
+          },
+          "point_in_time_universe": {
+            "type": "boolean",
+            "title": "Point In Time Universe"
+          },
+          "coverage_note": {
+            "type": "string",
+            "title": "Coverage Note"
+          },
+          "entitlement_note": {
+            "type": "string",
+            "title": "Entitlement Note"
+          },
+          "adjustment_note": {
+            "type": "string",
+            "title": "Adjustment Note"
+          },
+          "survivorship_note": {
+            "type": "string",
+            "title": "Survivorship Note"
+          },
+          "requires_key": {
+            "type": "boolean",
+            "title": "Requires Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "feed",
+          "data_label",
+          "is_demo",
+          "benchmark_symbol",
+          "benchmark_return_basis",
+          "point_in_time_universe",
+          "coverage_note",
+          "entitlement_note",
+          "adjustment_note",
+          "survivorship_note",
+          "requires_key"
+        ],
+        "title": "ProviderInfoModel"
+      },
+      "QualityWarning": {
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
+            "title": "Level"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level",
+          "message"
+        ],
+        "title": "QualityWarning"
+      },
+      "RefreshResponse": {
+        "properties": {
+          "started": {
+            "type": "boolean",
+            "title": "Started"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "started",
+          "message"
+        ],
+        "title": "RefreshResponse"
+      },
+      "Reproducibility": {
+        "properties": {
+          "app_version": {
+            "type": "string",
+            "title": "App Version"
+          },
+          "git_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Commit"
+          },
+          "python": {
+            "type": "string",
+            "title": "Python"
+          },
+          "packages": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Packages"
+          },
+          "database_path": {
+            "type": "string",
+            "title": "Database Path"
+          },
+          "schema_migrations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Schema Migrations"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "data_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Version"
+          },
+          "portfolio_configs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Portfolio Configs"
+          },
+          "plan_data_versions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Plan Data Versions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "app_version",
+          "git_commit",
+          "python",
+          "packages",
+          "database_path",
+          "schema_migrations",
+          "provider",
+          "data_version",
+          "portfolio_configs",
+          "plan_data_versions"
+        ],
+        "title": "Reproducibility"
+      },
+      "ResearchDefaults": {
+        "properties": {
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "earliest_start": {
+            "type": "string",
+            "title": "Earliest Start"
+          },
+          "latest_end": {
+            "type": "string",
+            "title": "Latest End"
+          },
+          "benchmark_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Symbol"
+          },
+          "survivorship_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Survivorship Warning"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_label",
+          "config",
+          "earliest_start",
+          "latest_end",
+          "benchmark_symbol",
+          "survivorship_warning"
+        ],
+        "title": "ResearchDefaults"
+      },
+      "RuleCheck": {
+        "properties": {
+          "rule": {
+            "type": "string",
+            "title": "Rule"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rule",
+          "ok",
+          "detail"
+        ],
+        "title": "RuleCheck"
+      },
+      "RunDetail": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress"
+          },
+          "progress_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Note"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "data_version": {
+            "type": "string",
+            "title": "Data Version"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "headline": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headline"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics"
+          },
+          "assumptions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Assumptions"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          },
+          "repro": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repro"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "progress",
+          "progress_note",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "error",
+          "provider",
+          "data_label",
+          "data_version",
+          "config",
+          "headline",
+          "metrics",
+          "assumptions",
+          "warnings",
+          "repro"
+        ],
+        "title": "RunDetail"
+      },
+      "RunRebalance": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "signal_session": {
+            "type": "string",
+            "title": "Signal Session"
+          },
+          "fill_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fill Session"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "universe_count": {
+            "type": "integer",
+            "title": "Universe Count"
+          },
+          "eligible_count": {
+            "type": "integer",
+            "title": "Eligible Count"
+          },
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "nav_at_open": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nav At Open"
+          },
+          "turnover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turnover"
+          },
+          "slippage_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage Cost"
+          },
+          "commission": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commission"
+          },
+          "cash_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash After"
+          },
+          "unfilled": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Unfilled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "signal_session",
+          "fill_session",
+          "status",
+          "universe_count",
+          "eligible_count",
+          "selected_count",
+          "nav_at_open",
+          "turnover",
+          "slippage_cost",
+          "commission",
+          "cash_after",
+          "unfilled"
+        ],
+        "title": "RunRebalance"
+      },
+      "RunRequest": {
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "title": "RunRequest"
+      },
+      "RunSeriesPoint": {
+        "properties": {
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "nav": {
+            "type": "number",
+            "title": "Nav"
+          },
+          "gross_nav": {
+            "type": "number",
+            "title": "Gross Nav"
+          },
+          "benchmark_nav": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Nav"
+          },
+          "drawdown": {
+            "type": "number",
+            "title": "Drawdown"
+          },
+          "benchmark_drawdown": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Drawdown"
+          },
+          "cash_weight": {
+            "type": "number",
+            "title": "Cash Weight"
+          },
+          "positions": {
+            "type": "integer",
+            "title": "Positions"
+          },
+          "rolling_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolling Return"
+          },
+          "rolling_vol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolling Vol"
+          },
+          "rolling_bench_return": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolling Bench Return"
+          },
+          "rolling_difference": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rolling Difference"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session",
+          "nav",
+          "gross_nav",
+          "benchmark_nav",
+          "drawdown",
+          "benchmark_drawdown",
+          "cash_weight",
+          "positions",
+          "rolling_return",
+          "rolling_vol",
+          "rolling_bench_return",
+          "rolling_difference"
+        ],
+        "title": "RunSeriesPoint"
+      },
+      "RunSummary": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress"
+          },
+          "progress_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Note"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "data_version": {
+            "type": "string",
+            "title": "Data Version"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "headline": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Headline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "status",
+          "progress",
+          "progress_note",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "error",
+          "provider",
+          "data_label",
+          "data_version",
+          "config",
+          "headline"
+        ],
+        "title": "RunSummary"
+      },
+      "SectorExposure": {
+        "properties": {
+          "sector": {
+            "type": "string",
+            "title": "Sector"
+          },
+          "weight": {
+            "type": "number",
+            "title": "Weight"
+          },
+          "positions": {
+            "type": "integer",
+            "title": "Positions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sector",
+          "weight",
+          "positions"
+        ],
+        "title": "SectorExposure"
+      },
+      "SignalInputs": {
+        "properties": {
+          "signal_session": {
+            "type": "string",
+            "title": "Signal Session"
+          },
+          "session_t21": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session T21"
+          },
+          "session_t252": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session T252"
+          },
+          "close_t": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close T"
+          },
+          "close_t21_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close T21 Raw"
+          },
+          "close_t252_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close T252 Raw"
+          },
+          "tr_t21": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tr T21"
+          },
+          "tr_t252": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tr T252"
+          },
+          "momentum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Momentum"
+          },
+          "adv20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adv20"
+          },
+          "valid_history": {
+            "type": "integer",
+            "title": "Valid History"
+          },
+          "eligible": {
+            "type": "boolean",
+            "title": "Eligible"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "reason_text": {
+            "type": "string",
+            "title": "Reason Text"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "formula": {
+            "type": "string",
+            "title": "Formula"
+          }
+        },
+        "type": "object",
+        "required": [
+          "signal_session",
+          "session_t21",
+          "session_t252",
+          "close_t",
+          "close_t21_raw",
+          "close_t252_raw",
+          "tr_t21",
+          "tr_t252",
+          "momentum",
+          "adv20",
+          "valid_history",
+          "eligible",
+          "reason",
+          "reason_text",
+          "rank",
+          "formula"
+        ],
+        "title": "SignalInputs"
+      },
+      "SkipRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "SkipRequest"
+      },
+      "StaleSymbol": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "last_bar": {
+            "type": "string",
+            "title": "Last Bar"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "last_bar"
+        ],
+        "title": "StaleSymbol"
+      },
+      "StockDetail": {
+        "properties": {
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          },
+          "sector_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector Source"
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type"
+          },
+          "asset_type_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Type Source"
+          },
+          "exchange": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exchange"
+          },
+          "list_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "List Date"
+          },
+          "delist_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delist Date"
+          },
+          "signal": {
+            "$ref": "#/components/schemas/SignalInputs"
+          },
+          "prices": {
+            "items": {
+              "$ref": "#/components/schemas/PricePoint"
+            },
+            "type": "array",
+            "title": "Prices"
+          },
+          "corporate_actions": {
+            "items": {
+              "$ref": "#/components/schemas/CorporateActionModel"
+            },
+            "type": "array",
+            "title": "Corporate Actions"
+          },
+          "position_shares": {
+            "type": "integer",
+            "title": "Position Shares"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_label",
+          "symbol",
+          "name",
+          "sector",
+          "sector_source",
+          "asset_type",
+          "asset_type_source",
+          "exchange",
+          "list_date",
+          "delist_date",
+          "signal",
+          "prices",
+          "corporate_actions",
+          "position_shares"
+        ],
+        "title": "StockDetail"
+      },
+      "StrategyConfig": {
+        "properties": {
+          "initial_capital": {
+            "type": "number",
+            "maximum": 10000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Initial Capital",
+            "description": "Starting virtual cash, USD",
+            "default": 100000.0
+          },
+          "top_n": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Top N",
+            "description": "Number of top-ranked eligible stocks to hold",
+            "default": 50
+          },
+          "lookback_sessions": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 2.0,
+            "title": "Lookback Sessions",
+            "description": "Older momentum anchor: sessions before signal",
+            "default": 252
+          },
+          "skip_sessions": {
+            "type": "integer",
+            "maximum": 252.0,
+            "minimum": 0.0,
+            "title": "Skip Sessions",
+            "description": "Recent anchor: sessions before signal (skip month)",
+            "default": 21
+          },
+          "min_history_sessions": {
+            "type": "integer",
+            "maximum": 2000.0,
+            "minimum": 0.0,
+            "title": "Min History Sessions",
+            "description": "Valid bars required before the signal session",
+            "default": 252
+          },
+          "min_price": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Min Price",
+            "description": "Raw (unadjusted) close at the signal session must exceed this, USD",
+            "default": 5.0
+          },
+          "adv_window": {
+            "type": "integer",
+            "maximum": 252.0,
+            "minimum": 1.0,
+            "title": "Adv Window",
+            "description": "Sessions in the average dollar-volume window",
+            "default": 20
+          },
+          "min_adv_usd": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Min Adv Usd",
+            "description": "Minimum trailing average daily dollar volume, USD",
+            "default": 5000000.0
+          },
+          "slippage_bps": {
+            "type": "number",
+            "maximum": 500.0,
+            "minimum": 0.0,
+            "title": "Slippage Bps",
+            "description": "Assumed adverse slippage vs. the open, basis points",
+            "default": 10.0
+          },
+          "commission_per_order": {
+            "type": "number",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Commission Per Order",
+            "description": "Assumed flat commission per fill, USD",
+            "default": 0.0
+          },
+          "commission_bps": {
+            "type": "number",
+            "maximum": 500.0,
+            "minimum": 0.0,
+            "title": "Commission Bps",
+            "description": "Assumed commission as bps of traded value",
+            "default": 0.0
+          },
+          "min_session_coverage": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Session Coverage",
+            "description": "Share of the point-in-time universe that must have a bar at the signal session; otherwise the rebalance is blocked",
+            "default": 0.9
+          },
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date",
+            "description": "Backtest start (ISO date); ignored by the paper ledger"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date",
+            "description": "Backtest end (ISO date); ignored by the paper ledger"
+          },
+          "benchmark_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Symbol",
+            "description": "Benchmark; default = provider's SPY (or demo stand-in)"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StrategyConfig",
+        "description": "All tunable inputs of the 12-1 momentum strategy.\n\nDefaults are the documented v1 specification. Every backtest run and every\npaper-portfolio configuration version stores the full JSON of this model."
+      },
+      "SystemStatus": {
+        "properties": {
+          "app_version": {
+            "type": "string",
+            "title": "App Version"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "demo",
+              "live"
+            ],
+            "title": "Mode"
+          },
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderInfoModel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Error"
+          },
+          "market_clock": {
+            "$ref": "#/components/schemas/MarketClock"
+          },
+          "data_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Version"
+          },
+          "data_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Start"
+          },
+          "data_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data End"
+          },
+          "has_portfolio": {
+            "type": "boolean",
+            "title": "Has Portfolio"
+          },
+          "portfolio_as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio As Of"
+          },
+          "server_time_utc": {
+            "type": "string",
+            "title": "Server Time Utc"
+          },
+          "bind_host": {
+            "type": "string",
+            "title": "Bind Host"
+          }
+        },
+        "type": "object",
+        "required": [
+          "app_version",
+          "mode",
+          "data_label",
+          "provider",
+          "provider_error",
+          "market_clock",
+          "data_version",
+          "data_start",
+          "data_end",
+          "has_portfolio",
+          "portfolio_as_of",
+          "server_time_utc",
+          "bind_host"
+        ],
+        "title": "SystemStatus"
+      },
+      "UniverseResponse": {
+        "properties": {
+          "data_label": {
+            "type": "string",
+            "title": "Data Label"
+          },
+          "signal_session": {
+            "type": "string",
+            "title": "Signal Session"
+          },
+          "is_month_end": {
+            "type": "boolean",
+            "title": "Is Month End"
+          },
+          "basis_note": {
+            "type": "string",
+            "title": "Basis Note"
+          },
+          "plan_signal_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Signal Session"
+          },
+          "portfolio_as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Portfolio As Of"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "universe_count": {
+            "type": "integer",
+            "title": "Universe Count"
+          },
+          "eligible_count": {
+            "type": "integer",
+            "title": "Eligible Count"
+          },
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "coverage": {
+            "type": "number",
+            "title": "Coverage"
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          },
+          "reason_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Reason Counts"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/UniverseRow"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_label",
+          "signal_session",
+          "is_month_end",
+          "basis_note",
+          "plan_signal_session",
+          "portfolio_as_of",
+          "config",
+          "universe_count",
+          "eligible_count",
+          "selected_count",
+          "coverage",
+          "blocked_reason",
+          "reason_counts",
+          "rows"
+        ],
+        "title": "UniverseResponse"
+      },
+      "UniverseRow": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          },
+          "asset_type": {
+            "type": "string",
+            "title": "Asset Type"
+          },
+          "close_raw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Raw"
+          },
+          "adv20": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adv20"
+          },
+          "momentum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Momentum"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank"
+          },
+          "eligible": {
+            "type": "boolean",
+            "title": "Eligible"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "reason_text": {
+            "type": "string",
+            "title": "Reason Text"
+          },
+          "selected": {
+            "type": "boolean",
+            "title": "Selected"
+          },
+          "model_weight": {
+            "type": "number",
+            "title": "Model Weight",
+            "description": "Equal weight if selected by this live ranking"
+          },
+          "plan_target_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Target Weight",
+            "description": "Target weight in the latest frozen paper plan"
+          },
+          "position_shares": {
+            "type": "integer",
+            "title": "Position Shares"
+          },
+          "current_weight": {
+            "type": "number",
+            "title": "Current Weight"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "name",
+          "sector",
+          "asset_type",
+          "close_raw",
+          "adv20",
+          "momentum",
+          "rank",
+          "eligible",
+          "reason",
+          "reason_text",
+          "selected",
+          "model_weight",
+          "plan_target_weight",
+          "position_shares",
+          "current_weight"
+        ],
+        "title": "UniverseRow"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

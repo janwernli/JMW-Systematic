@@ -133,11 +133,10 @@ def _nz(v):
 def _upsert_bars(conn, ids: dict[str, int], bars: pd.DataFrame, import_id: int) -> int:
     if bars.empty:
         return 0
-    rows = [
-        (ids[s], d, _nz(o), _nz(h), _nz(lo), _nz(c), _nz(v), import_id)
-        for s, d, o, h, lo, c, v in bars[["symbol", "session", "open", "high", "low", "close", "volume"]].itertuples(index=False)
-        if s in ids
-    ]
+    b = bars[bars["symbol"].isin(ids)]
+    vals = b[["open", "high", "low", "close", "volume"]].astype(float)
+    vals = vals.astype(object).where(vals.notna(), None)
+    rows = list(zip(b["symbol"].map(ids), b["session"], *(vals[c] for c in vals.columns), [import_id] * len(b)))
     conn.executemany(
         "INSERT INTO bars (instrument_id, session, open, high, low, close, volume, import_id) VALUES (?,?,?,?,?,?,?,?)"
         " ON CONFLICT(instrument_id, session) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low,"
@@ -181,8 +180,27 @@ def load_frames(db: Database, provider: str) -> tuple[pd.DataFrame, pd.DataFrame
     return inst, bars, acts
 
 
+_version_cache: dict[tuple, str] = {}
+
+
 def data_version(db: Database, provider: str) -> str:
-    """Content fingerprint of the stored data for `provider` (changes whenever bars/actions change)."""
+    """Content fingerprint of the stored data for `provider` (changes whenever bars/actions change).
+
+    Cached per latest import record: every write to bars/actions goes through `run_import`,
+    which creates a new data_imports row, so the cache key changes whenever data can change.
+    """
+    stamp = db.query_one("SELECT MAX(id) id, MAX(COALESCE(finished_at, started_at)) ts, COUNT(*) n FROM data_imports "
+                         "WHERE provider=?", (provider,))
+    key = (str(db.path), provider, stamp["id"], stamp["ts"], stamp["n"])
+    if key in _version_cache:
+        return _version_cache[key]
+    ver = _compute_data_version(db, provider)
+    _version_cache.clear()
+    _version_cache[key] = ver
+    return ver
+
+
+def _compute_data_version(db: Database, provider: str) -> str:
     row = db.query_one(
         "SELECT COUNT(*) n, MIN(b.session) lo, MAX(b.session) hi, ROUND(SUM(b.close), 4) sc,"
         " ROUND(SUM(COALESCE(b.open, 0)), 4) so, ROUND(SUM(b.volume), 0) sv"

@@ -7,4 +7,4 @@ requires-python = ">=3.11"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
-filterwarnings = ["ignore::DeprecationWarning:exchange_calendars.*"]
+filterwarnings = ["ignore::DeprecationWarning:exchange_calendars.*", "ignore:Using `httpx` with:DeprecationWarning"]

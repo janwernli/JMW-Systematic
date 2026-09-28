@@ -238,7 +238,7 @@ class PaperLedger:
             as_of = p["as_of_session"]
             plan = self.pending_plan(pid)
             if plan and plan["status"] == "proposed":
-                if auto_apply:
+                if auto_apply and plan["fill_session"] <= target:
                     self.apply_plan(plan["id"])
                     with self.db.transaction() as conn:
                         log_event(conn, "info", "rebalance", f"Plan #{plan['id']} auto-applied (demo seed)", portfolio_id=pid)
