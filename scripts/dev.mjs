@@ -10,7 +10,10 @@ const procs = [
   ["web", "\x1b[32m", "npm", ["--prefix", "frontend", "run", "dev"]],
 ];
 const children = procs.map(([name, color, cmd, args]) => {
-  const c = spawn(cmd, args, { cwd: root, shell: win && cmd === "npm", env: { ...process.env, FORCE_COLOR: "1" } });
+  const env = { ...process.env, FORCE_COLOR: "1" };
+  const c = cmd === "npm"
+    ? spawn(`npm ${args.join(" ")}`, { cwd: root, shell: true, env })
+    : spawn(cmd, args, { cwd: root, env });
   const pipe = (stream, out) => stream.on("data", (d) => {
     for (const line of d.toString().split(/\r?\n/)) if (line.trim()) out.write(`${color}[${name}]\x1b[0m ${line}\n`);
   });

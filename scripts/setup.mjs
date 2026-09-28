@@ -11,7 +11,10 @@ const venvPy = win ? join(backend, ".venv", "Scripts", "python.exe") : join(back
 
 function run(cmd, args, cwd = root) {
   console.log(`\n> ${cmd} ${args.join(" ")}`);
-  const r = spawnSync(cmd, args, { cwd, stdio: "inherit", shell: win && cmd === "npm" });
+  // npm is a .cmd shim on Windows and must go through a shell; pass one command string (fixed, trusted args).
+  const r = cmd === "npm"
+    ? spawnSync(`npm ${args.join(" ")}`, { cwd, stdio: "inherit", shell: true })
+    : spawnSync(cmd, args, { cwd, stdio: "inherit" });
   if (r.status !== 0) {
     console.error(`\nCommand failed: ${cmd} ${args.join(" ")}`);
     process.exit(r.status ?? 1);
