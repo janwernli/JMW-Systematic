@@ -51,7 +51,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"processed {len(r.processed)} sessions; as of {r.as_of}; stopped: {r.stopped_reason}")
         return 0
 
+    import socket
+
     import uvicorn
+
+    with socket.socket() as sock:
+        if sock.connect_ex((settings.host, settings.port)) == 0:
+            print(f"ERROR: port {settings.port} on {settings.host} is already in use by another program. "
+                  f"Set a free port in .env, e.g. APP_PORT=8766 (the frontend proxy reads the same value).",
+                  file=sys.stderr)
+            return 2
 
     if settings.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"WARNING: binding to {settings.host} exposes the app beyond this computer.", file=sys.stderr)

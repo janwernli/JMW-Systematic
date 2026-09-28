@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # Server
     host: str = Field(default="127.0.0.1", alias="APP_HOST")
-    port: int = Field(default=8000, alias="APP_PORT")
+    port: int = Field(default=8765, alias="APP_PORT")
     cors_origins: str = Field(
         default="http://127.0.0.1:5173,http://localhost:5173", alias="APP_CORS_ORIGINS"
     )

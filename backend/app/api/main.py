@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -67,6 +67,11 @@ def create_app(settings: Settings | None = None, ctx: AppContext | None = None, 
     async def ledger_error(_: Request, exc: LedgerError):
         status = 404 if exc.code in ("not_found", "no_portfolio") else 409
         return JSONResponse(status_code=status, content={"error": exc.code, "message": str(exc)})
+
+    @app.exception_handler(HTTPException)
+    async def http_error(_: Request, exc: HTTPException):
+        code = {400: "invalid_request", 404: "not_found", 409: "conflict"}.get(exc.status_code, "http_error")
+        return JSONResponse(status_code=exc.status_code, content={"error": code, "message": str(exc.detail)})
 
     @app.exception_handler(ProviderError)
     async def provider_error(_: Request, exc: ProviderError):

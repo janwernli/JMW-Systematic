@@ -32,7 +32,13 @@ def _detail(ctx: AppContext, plan: dict) -> dict:
         "SELECT po.*, o.status AS order_status, o.filled_shares, o.status_reason AS order_reason FROM plan_orders po "
         "LEFT JOIN paper_orders o ON o.plan_id=po.plan_id AND o.symbol=po.symbol WHERE po.plan_id=? "
         "ORDER BY po.side DESC, po.est_value DESC", (plan["id"],))
-    cur_w = {o["symbol"]: o["current_weight"] for o in orders}
+    # Current weights at the signal-session close, from the immutable position snapshots
+    # (covers holdings that need no trade and therefore have no order row).
+    nav_row = ctx.db.query_one("SELECT nav FROM paper_nav WHERE portfolio_id=? AND session=?",
+                               (plan["portfolio_id"], plan["signal_session"]))
+    cur_w = {r["symbol"]: r["market_value"] / nav_row["nav"] for r in ctx.db.query(
+        "SELECT symbol, market_value FROM position_snapshots WHERE portfolio_id=? AND session=?",
+        (plan["portfolio_id"], plan["signal_session"]))} if nav_row and nav_row["nav"] else {}
     targets = [
         {**t, "current_weight": cur_w.get(t["symbol"], 0.0)} for t in ctx.db.query(
             "SELECT symbol, rank, momentum, close_raw, adv20, target_weight FROM signal_rows "
