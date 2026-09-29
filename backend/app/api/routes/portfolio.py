@@ -63,7 +63,14 @@ def command_center(ctx: AppContext = Depends(get_ctx)):
         "nav_series": [], "top_movers": [], "recent_fills": [], "alerts": [],
         "data_is_stale": q["is_stale"], "data_stale_reason": q["stale_reason"], "data_end": q["coverage_end"],
     }
-    events = ctx.db.query("SELECT * FROM system_events WHERE level IN ('warning','error') ORDER BY id DESC LIMIT 12")
+    # Alerts for the active portfolio, plus system-wide events (imports etc.) since it was created.
+    if port:
+        events = ctx.db.query(
+            "SELECT * FROM system_events WHERE level IN ('warning','error') AND (portfolio_id=? OR "
+            "(portfolio_id IS NULL AND ts>=?)) ORDER BY id DESC LIMIT 12", (port["id"], port["created_at"]))
+    else:
+        events = ctx.db.query("SELECT * FROM system_events WHERE level IN ('warning','error') AND portfolio_id IS NULL "
+                              "ORDER BY id DESC LIMIT 12")
     base["alerts"] = [event_row(e) for e in events]
     if not port:
         return base
@@ -103,6 +110,8 @@ def command_center(ctx: AppContext = Depends(get_ctx)):
                "pending_plan_id": None, "pending_plan_status": None,
                "blocked_reason": latest["block_reason"] if latest and latest["status"] == "blocked" else None}
     bench_ret = series[-1]["benchmark_nav"] / cap - 1 if series and series[-1]["benchmark_nav"] else None
+    lv = last.get("long_value") or 0.0
+    sv = -(last.get("short_value") or 0.0)
     inc = last["nav"] / cap - 1
     base.update({
         "valuation_session": last["session"], "nav": last["nav"], "cash": last["cash"],
@@ -113,6 +122,8 @@ def command_center(ctx: AppContext = Depends(get_ctx)):
         "benchmark_inception_return": bench_ret,
         "return_difference": (inc - bench_ret) if bench_ret is not None else None,
         "drawdown": series[-1]["drawdown"], "max_drawdown": min(s["drawdown"] for s in series),
+        "mode": ctx.ledger.config_of(port).mode, "long_gross": lv / last["nav"], "short_gross": sv / last["nav"],
+        "net_exposure": (lv - sv) / last["nav"],
         "next_rebalance": nxt, "nav_series": series, "top_movers": movers[:8], "recent_fills": fills,
     })
     return base
@@ -129,7 +140,7 @@ def positions(ctx: AppContext = Depends(get_ctx)):
         "SELECT ps.*, p.opened_session, i.name, i.sector, i.sector_source FROM position_snapshots ps "
         "LEFT JOIN positions p ON p.portfolio_id=ps.portfolio_id AND p.symbol=ps.symbol "
         "LEFT JOIN instruments i ON i.symbol=ps.symbol AND i.provider=? "
-        "WHERE ps.portfolio_id=? AND ps.session=? ORDER BY ps.market_value DESC",
+        "WHERE ps.portfolio_id=? AND ps.session=? ORDER BY ABS(ps.market_value) DESC",
         (ctx.require_provider().info.key, pid, s))
     plan = latest_plan(ctx, pid)
     targets: dict[str, float] = {}
@@ -143,15 +154,19 @@ def positions(ctx: AppContext = Depends(get_ctx)):
         tw = targets.get(r["symbol"], 0.0) if plan else None
         pnl = r["market_value"] - r["cost_basis"]
         rows.append({
-            "symbol": r["symbol"], "name": r["name"], "sector": r["sector"], "shares": r["shares"],
+            "symbol": r["symbol"], "side": "short" if r["shares"] < 0 else "long",
+            "name": r["name"], "sector": r["sector"], "shares": r["shares"],
             "mark_price": r["mark_price"], "mark_session": r["mark_session"], "stale_mark": r["mark_session"] != s,
             "market_value": r["market_value"], "weight": w, "target_weight": tw,
             "drift": (w - tw) if tw is not None else None, "cost_basis": r["cost_basis"], "unrealized_pnl": pnl,
-            "unrealized_pct": pnl / r["cost_basis"] if r["cost_basis"] else None, "contribution": pnl / nav if nav else 0,
+            "unrealized_pct": pnl / abs(r["cost_basis"]) if r["cost_basis"] else None,
+            "contribution": pnl / nav if nav else 0,
             "return_1d": r1.get(r["symbol"]), "opened_session": r["opened_session"],
         })
-    weights = sorted((x["weight"] for x in rows), reverse=True)
+    weights = sorted((abs(x["weight"]) for x in rows), reverse=True)
     invested = sum(weights)
+    long_g = sum(x["weight"] for x in rows if x["weight"] > 0)
+    short_g = -sum(x["weight"] for x in rows if x["weight"] < 0)
     hhi = sum((w / invested) ** 2 for w in weights) if invested else 0.0
     sector_ok = rows and all(x["sector"] for x in rows)
     sources = {r["sector_source"] for r in rows_db if r["sector_source"]}
@@ -160,18 +175,22 @@ def positions(ctx: AppContext = Depends(get_ctx)):
         agg: dict[str, list] = {}
         for x in rows:
             agg.setdefault(x["sector"], []).append(x["weight"])
-        sectors = sorted(({"sector": k, "weight": sum(v), "positions": len(v)} for k, v in agg.items()),
-                         key=lambda d: -d["weight"])
+        sectors = sorted(({"sector": k, "weight": sum(v), "long_weight": sum(w for w in v if w > 0),
+                           "short_weight": sum(w for w in v if w < 0), "positions": len(v)} for k, v in agg.items()),
+                         key=lambda d: -abs(d["weight"]))
     return {
         "data_label": "Paper Simulation", "valuation_session": s,
         "valuation_note": f"Marked at raw closes of {s}; stale marks carry the last available close.",
         "nav": nav, "cash": last["cash"], "cash_weight": last["cash"] / nav if nav else 0.0, "rows": rows,
+        "long_gross": long_g, "short_gross": short_g, "net_exposure": long_g - short_g,
+        "mode": ctx.ledger.config_of(port).mode,
         "sector_exposure": sectors,
         "sector_note": (f"Sector source: {', '.join(sorted(sources))}." if sector_ok else
                         "Sector exposure hidden: the data provider does not supply reliable sector metadata."),
         "concentration": {
             "top5_weight": sum(weights[:5]), "top10_weight": sum(weights[:10]),
-            "largest_symbol": rows[0]["symbol"] if rows else None, "largest_weight": weights[0] if weights else 0.0,
+            "largest_symbol": max(rows, key=lambda x: abs(x["weight"]))["symbol"] if rows else None,
+            "largest_weight": weights[0] if weights else 0.0,
             "hhi": hhi, "effective_n": (1 / hhi) if hhi else None,
         },
         "plan_signal_session": plan["signal_session"] if plan else None,

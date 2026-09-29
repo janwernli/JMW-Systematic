@@ -33,7 +33,12 @@ export function Portfolio() {
 
       <div className="kpi-strip">
         <Kpi label="NAV" value={fmtUsd(data.nav, true)} sub="cash + Σ shares × mark" />
-        <Kpi label="Cash" value={fmtUsd(data.cash, true)} sub={`${fmtPct(data.cash_weight, 2)} of NAV (residual)`} />
+        <Kpi label="Cash" value={fmtUsd(data.cash, true)} sub={data.mode === "long_short" ? `${fmtPct(data.cash_weight, 1)} of NAV (incl. short proceeds)` : `${fmtPct(data.cash_weight, 2)} of NAV (residual)`} />
+        {data.mode === "long_short" && (
+          <Kpi label="Gross / net" value={`${fmtPct(data.long_gross + data.short_gross, 0)} / ${fmtPct(data.net_exposure, 1, true)}`}
+            sub={`long ${fmtPct(data.long_gross, 1)} · short ${fmtPct(data.short_gross, 1)}`}
+            tip="Long market value / NAV and |short market value| / NAV at the valuation close. The book targets beta neutrality, so net dollar exposure can differ from zero." />
+        )}
         <Kpi label="Positions" value={fmtNum(data.rows.length)} sub={stale ? `${stale} stale mark(s)` : "all marked at the valuation close"} />
         <Kpi label="Largest" value={fmtPct(c.largest_weight, 2)} sub={c.largest_symbol ?? "—"} />
         <Kpi label="Top 5 / Top 10" value={`${fmtPct(c.top5_weight, 1)} / ${fmtPct(c.top10_weight, 1)}`} sub="share of NAV" />
@@ -51,16 +56,17 @@ export function Portfolio() {
             rowKey={(r) => r.symbol}
             cols={[
               { id: "symbol", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
+              { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "long" ? "blue" : "orange"}>{r.side}</Badge> },
               { id: "name", header: "Name", value: (r) => r.name, cell: (r) => <Text size="xs" truncate maw={180}>{r.name}</Text> },
               { id: "sector", header: "Sector", value: (r) => r.sector },
               { id: "shares", header: "Shares", align: "right", value: (r) => r.shares, cell: (r) => fmtNum(r.shares) },
               { id: "mark", header: "Mark $", align: "right", value: (r) => r.mark_price, cell: (r) => (
                 <span>{fmtPx(r.mark_price)}{r.stale_mark && <Tooltip label={`Carried from ${r.mark_session}`}><Badge ml={4} size="xs" color="yellow" variant="light">stale</Badge></Tooltip>}</span>) },
-              { id: "value", header: "Mkt value", align: "right", value: (r) => r.market_value, cell: (r) => fmtUsd(r.market_value, true) },
-              { id: "w", header: "Weight", align: "right", value: (r) => r.weight, cell: (r) => fmtPct(r.weight, 2) },
-              { id: "tw", header: "Target", align: "right", value: (r) => r.target_weight, cell: (r) => fmtPct(r.target_weight, 2) },
+              { id: "value", header: "Mkt value", align: "right", value: (r) => Math.abs(r.market_value), cell: (r) => fmtUsd(r.market_value, true), tip: "Signed: shorts are negative" },
+              { id: "w", header: "Weight", align: "right", value: (r) => r.weight, cell: (r) => fmtPct(r.weight, 2, true) },
+              { id: "tw", header: "Target", align: "right", value: (r) => r.target_weight, cell: (r) => fmtPct(r.target_weight, 2, true) },
               { id: "drift", header: "Drift", align: "right", value: (r) => r.drift, cell: (r) => <Signed v={r.drift}>{fmtPct(r.drift, 2, true)}</Signed> },
-              { id: "basis", header: "Cost basis", align: "right", value: (r) => r.cost_basis, cell: (r) => fmtUsd(r.cost_basis, true), tip: "Incl. slippage & commissions; average-cost method" },
+              { id: "basis", header: "Cost basis", align: "right", value: (r) => r.cost_basis, cell: (r) => fmtUsd(r.cost_basis, true), tip: "Signed, average-cost: longs = cash paid incl. costs; shorts = −(net sale proceeds)" },
               { id: "pnl", header: "Unreal. P&L", align: "right", value: (r) => r.unrealized_pnl, cell: (r) => <Signed v={r.unrealized_pnl}>{fmtUsd(r.unrealized_pnl, true)}</Signed> },
               { id: "pct", header: "P&L %", align: "right", value: (r) => r.unrealized_pct, cell: (r) => <Signed v={r.unrealized_pct}>{fmtPct(r.unrealized_pct, 1, true)}</Signed> },
               { id: "contrib", header: "Contrib.", align: "right", value: (r) => r.contribution, cell: (r) => <Signed v={r.contribution}>{fmtPct(r.contribution, 2, true)}</Signed> },
@@ -73,10 +79,10 @@ export function Portfolio() {
 
       <div className="grid-12">
         <Panel className="span-6" title="Drift from target weight" label="Paper Simulation"
-          source="Current weight − target weight per holding, percentage points of NAV. Drift accumulates between monthly rebalances as prices move.">
+          source="Signed current weight − signed target weight per holding, percentage points of NAV (for shorts, negative drift = larger short than target). Drift accumulates between monthly rebalances as prices move.">
           {data.rows.length ? <DriftChart rows={data.rows} /> : <Empty title="No positions" />}
         </Panel>
-        <Panel className="span-3" title="Sector exposure" source={data.sector_note}>
+        <Panel className="span-3" title="Sector exposure (net)" source={`${data.sector_note} Net = long minus short weight per sector.`}>
           {data.sector_exposure ? <SectorChart rows={data.sector_exposure} /> : <Empty title="Unavailable">{data.sector_note}</Empty>}
         </Panel>
         <Panel className="span-3" title="Concentration" source="Weights are shares of NAV unless stated. Equal-weight target with N holdings implies ~1/N each.">

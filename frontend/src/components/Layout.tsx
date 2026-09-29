@@ -90,7 +90,7 @@ export function Layout() {
             <Text fw={700} size="sm" style={{ letterSpacing: "0.14em" }}>
               MOMENTUM<span style={{ color: "#3987e5" }}>·</span>TERMINAL
             </Text>
-            <Text size="xs" c="dimmed" visibleFrom="md">US equities · 12–1 momentum · long-only</Text>
+            <Text size="xs" c="dimmed" visibleFrom="md">US equities · 12–1 cross-sectional momentum · long-short / long-only</Text>
           </Group>
           <Group gap="md" wrap="nowrap">
             <Clock />

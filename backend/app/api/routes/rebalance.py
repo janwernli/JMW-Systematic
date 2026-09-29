@@ -41,7 +41,7 @@ def _detail(ctx: AppContext, plan: dict) -> dict:
         (plan["portfolio_id"], plan["signal_session"]))} if nav_row and nav_row["nav"] else {}
     targets = [
         {**t, "current_weight": cur_w.get(t["symbol"], 0.0)} for t in ctx.db.query(
-            "SELECT symbol, rank, momentum, close_raw, adv20, target_weight FROM signal_rows "
+            "SELECT symbol, rank, momentum, close_raw, adv20, target_weight, side, vol, beta, percentile FROM signal_rows "
             "WHERE set_id=? AND selected=1 ORDER BY rank", (plan["signal_set_id"],))
     ] if plan["signal_set_id"] else []
     fills = ctx.db.query("SELECT * FROM paper_fills WHERE plan_id=? ORDER BY id", (plan["id"],))

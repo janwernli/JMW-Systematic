@@ -11,7 +11,7 @@ import { C } from "../lib/colors";
 import { DASH, fmtMillions, fmtNum, fmtPct, fmtPx } from "../lib/format";
 
 type Row = S["UniverseRow"];
-type Filter = "all" | "eligible" | "selected" | "held" | "ineligible";
+type Filter = "all" | "eligible" | "long" | "short" | "held" | "ineligible";
 
 export function Universe() {
   const [basis, setBasis] = useState<"latest" | "plan">("latest");
@@ -29,8 +29,9 @@ export function Universe() {
     return data.rows.filter((r) => {
       if (s && !r.symbol.includes(s) && !(r.name ?? "").toUpperCase().includes(s) && !(r.sector ?? "").toUpperCase().includes(s)) return false;
       if (filter === "eligible") return r.eligible;
-      if (filter === "selected") return r.selected;
-      if (filter === "held") return r.position_shares > 0;
+      if (filter === "long") return r.side === "long";
+      if (filter === "short") return r.side === "short";
+      if (filter === "held") return r.position_shares !== 0;
       if (filter === "ineligible") return !r.eligible;
       return true;
     });
@@ -63,7 +64,13 @@ export function Universe() {
       <div className="kpi-strip">
         <Kpi label="Universe (point-in-time)" value={fmtNum(data.universe_count)} sub="common stocks listed at the session" />
         <Kpi label="Eligible" value={fmtNum(data.eligible_count)} sub={`price > $${data.config.min_price}, ADV ≥ ${fmtMillions(data.config.min_adv_usd)}`} />
-        <Kpi label="Selected" value={fmtNum(data.selected_count)} sub={`top ${data.config.top_n}, equal weight`} />
+        {data.config.mode === "long_short" ? (
+          <Kpi label="Long / short book" value={`${fmtNum(data.diagnostics.long_names as number)} / ${fmtNum(data.diagnostics.short_names as number)}`}
+            sub={`gross ${fmtPct(data.diagnostics.long_gross as number, 0)} / ${fmtPct(data.diagnostics.short_gross as number, 0)} · ex-ante vol ${fmtPct(data.diagnostics.ex_ante_vol as number, 1)}`}
+            tip="Decile entry with a 30% buffer, inverse-vol weights with per-name caps, beta-neutral, scaled to the vol target." />
+        ) : (
+          <Kpi label="Selected" value={fmtNum(data.selected_count)} sub={`top ${data.config.top_n}, equal weight`} />
+        )}
         <Kpi label="Bar coverage" value={fmtPct(data.coverage, 1)} sub={`min ${fmtPct(data.config.min_session_coverage, 0)} to rebalance`} />
         <Kpi label="Status" value={data.blocked_reason ? "BLOCKED" : "OK"} sub={data.blocked_reason ?? "data sufficient for ranking"} />
       </div>
@@ -75,7 +82,8 @@ export function Universe() {
             <TextInput placeholder="Search symbol, name, sector" leftSection={<IconSearch size={13} />} value={q}
               onChange={(e) => setQ(e.currentTarget.value)} w={220} aria-label="Search" />
             <SegmentedControl value={filter} onChange={(v) => setFilter(v as Filter)}
-              data={["all", "eligible", "selected", "held", "ineligible"].map((v) => ({ value: v, label: v }))} />
+              data={[{ value: "all", label: "all" }, { value: "eligible", label: "eligible" }, { value: "long", label: "long book" },
+                { value: "short", label: "short book" }, { value: "held", label: "held" }, { value: "ineligible", label: "ineligible" }]} />
           </Group>
         }>
         <DataTable<Row>
@@ -83,7 +91,7 @@ export function Universe() {
           maxHeight="calc(100vh - 290px)"
           onRowClick={(r) => setSymbol(r.symbol)}
           rowKey={(r) => r.symbol}
-          rowClass={(r) => (r.position_shares > 0 ? "row-held" : !r.eligible ? "row-dim" : undefined)}
+          rowClass={(r) => (r.position_shares !== 0 ? "row-held" : !r.eligible ? "row-dim" : undefined)}
           initialSort={[{ id: "rank", desc: false }]}
           cols={[
             { id: "rank", header: "Rank", align: "right", value: (r) => r.rank, cell: (r) => r.rank ?? DASH, width: 50 },
@@ -93,13 +101,17 @@ export function Universe() {
             { id: "close", header: "Close $", align: "right", value: (r) => r.close_raw, cell: (r) => fmtPx(r.close_raw), tip: "Raw close at the signal session (USD)" },
             { id: "adv", header: "ADV20", align: "right", value: (r) => r.adv20, cell: (r) => fmtMillions(r.adv20), tip: "Trailing average daily dollar volume (USD millions)" },
             { id: "mom", header: "12–1 mom", align: "right", value: (r) => r.momentum, cell: (r) => <Signed v={r.momentum}>{fmtPct(r.momentum, 1, true)}</Signed> },
-            { id: "elig", header: "Eligibility", value: (r) => r.reason, cell: (r) => r.eligible
-                ? <Badge size="xs" variant="light" color={r.selected ? "blue" : "gray"}>{r.selected ? "selected" : "eligible"}</Badge>
+            { id: "pct", header: "Pctile", align: "right", value: (r) => r.percentile, cell: (r) => (r.percentile == null ? "" : fmtPct(r.percentile, 0)),
+              tip: "Momentum percentile among eligible stocks (0% = strongest)" },
+            { id: "vol", header: "Vol", align: "right", value: (r) => r.vol, cell: (r) => (r.vol == null ? "" : fmtPct(r.vol, 0)), tip: "Annualized realized vol, trailing 126 sessions" },
+            { id: "beta", header: "Beta", align: "right", value: (r) => r.beta, cell: (r) => (r.beta == null ? "" : r.beta.toFixed(2)), tip: "Shrunk 252-session beta vs. the benchmark" },
+            { id: "elig", header: "Eligibility", value: (r) => (r.side ?? r.reason), cell: (r) => r.eligible
+                ? <Badge size="xs" variant="light" color={r.side === "long" ? "blue" : r.side === "short" ? "orange" : "gray"}>{r.side ?? "eligible"}</Badge>
                 : <Tooltip label={r.reason_text}><Badge size="xs" variant="outline" color="gray">{r.reason.replaceAll("_", " ")}</Badge></Tooltip> },
-            { id: "pos", header: "Shares", align: "right", value: (r) => r.position_shares, cell: (r) => (r.position_shares ? fmtNum(r.position_shares) : "") },
+            { id: "pos", header: "Shares", align: "right", value: (r) => r.position_shares, cell: (r) => (r.position_shares ? fmtNum(r.position_shares) : ""), tip: "Paper portfolio shares (negative = short)" },
             { id: "cw", header: "Cur wt", align: "right", value: (r) => r.current_weight, cell: (r) => (r.current_weight ? fmtPct(r.current_weight, 2) : "") },
-            { id: "mw", header: "Model wt", align: "right", value: (r) => r.model_weight, cell: (r) => (r.model_weight ? fmtPct(r.model_weight, 2) : "") },
-            { id: "pw", header: "Plan wt", align: "right", value: (r) => r.plan_target_weight, cell: (r) => (r.plan_target_weight ? fmtPct(r.plan_target_weight, 2) : ""), tip: "Target weight in the latest frozen rebalance plan" },
+            { id: "mw", header: "Model wt", align: "right", value: (r) => r.model_weight, cell: (r) => (r.model_weight ? fmtPct(r.model_weight, 2, true) : ""), tip: "Signed target weight from this ranking (negative = short)" },
+            { id: "pw", header: "Plan wt", align: "right", value: (r) => r.plan_target_weight, cell: (r) => (r.plan_target_weight ? fmtPct(r.plan_target_weight, 2, true) : ""), tip: "Signed target weight in the latest frozen rebalance plan" },
           ]}
         />
         <Text size="10px" c="dimmed" p={6}>

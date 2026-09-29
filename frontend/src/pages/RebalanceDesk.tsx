@@ -17,6 +17,15 @@ type Estimate = {
   est_commission: number; est_turnover: number; est_cash_after: number; est_positions_after: number; price_basis: string;
   universe_count: number; eligible_count: number; selected_count: number; coverage: number;
   unfilled_estimate: { symbol: string; reason: string; detail: string }[];
+  mode?: string; long_count?: number; short_count?: number; long_gross?: number; short_gross?: number;
+  stopped_shorts_excluded?: string[]; diagnostics?: Diag;
+};
+type Diag = {
+  long_names?: number; short_names?: number; long_gross?: number; short_gross?: number; net_exposure?: number;
+  beta_long?: number; beta_short?: number; beta_ratio?: number; ex_ante_net_beta?: number; unit_vol?: number;
+  vol_target?: number; ex_ante_vol?: number; binding?: string[]; notes?: string[]; cap_capacity?: number[];
+  max_long_weight?: number; max_short_weight?: number;
+  crash_guard?: { enabled: boolean; active: boolean; market_return: number | null; market_vol: number | null };
 };
 type Execution = {
   nav_at_open: number; buy_value: number; sell_value: number; turnover: number; slippage_cost: number; commission: number;
@@ -68,7 +77,12 @@ function PlanView({ plan }: { plan: S["PlanDetail"] }) {
         <Kpi label="Plan" value={<span>#{plan.id} <Badge color={STATUS_COLOR[plan.status]} variant="light" size="sm">{plan.status}</Badge></span>} sub={`created ${fmtTs(plan.created_at)}`} />
         <Kpi label="Signal frozen at" value={plan.signal_session} sub="after the close (data ≤ this session)" />
         <Kpi label="Fill session" value={plan.fill_session} sub="simulated at the OPEN ± slippage" />
-        <Kpi label="Targets" value={`${plan.selected_count}`} sub={`of ${est.eligible_count} eligible / ${est.universe_count} universe`} />
+        {est.mode === "long_short" ? (
+          <Kpi label="Long / short" value={`${est.long_count} / ${est.short_count}`}
+            sub={`gross ${fmtPct(est.long_gross, 0)} / ${fmtPct(est.short_gross, 0)} · ${est.eligible_count} eligible`} />
+        ) : (
+          <Kpi label="Targets" value={`${plan.selected_count}`} sub={`of ${est.eligible_count} eligible / ${est.universe_count} universe`} />
+        )}
         <Kpi label="Est. turnover" value={fmtPct(plan.est_turnover, 1)} sub={plan.realized_turnover != null ? `realized ${fmtPct(plan.realized_turnover, 1)}` : "one-way, of NAV"} />
         <Kpi label="Est. costs" value={fmtUsd(est.est_slippage + est.est_commission, true)} sub={`${plan.config.slippage_bps} bps slippage (assumed)`} />
       </div>
@@ -125,6 +139,8 @@ function PlanView({ plan }: { plan: S["PlanDetail"] }) {
           )}
         </Panel>
 
+        {est.mode === "long_short" && est.diagnostics && <Sizing d={est.diagnostics} est={est} cfg={plan.config} />}
+
         <Panel className="span-5" title="Rule checks" source="Automated checks evaluated when the plan was frozen (plus a data-revision notice if data changed since).">
           {plan.checks.map((c, i) => (
             <div key={i} className="check-row">
@@ -137,28 +153,31 @@ function PlanView({ plan }: { plan: S["PlanDetail"] }) {
           )}
         </Panel>
         <Panel className="span-7" title="Current vs target weight" label="Paper Simulation"
-          source="Per-name weight of NAV before the rebalance (current, at the signal close) and the equal target weight. Sorted by target rank; names being exited appear at the right with target 0.">
+          source="Signed per-name weight of NAV before the rebalance (current, at the signal close) and the target weight (shorts negative). Longs by rank, then shorts; names being exited appear at the right with target 0.">
           <WeightsChart plan={plan} />
         </Panel>
 
-        <Panel className="span-6" title={`Proposed sells (${sells.length})`} pad={false} source="Estimated at the signal-session close with sells priced at close × (1 − slippage). Actual sizes are recomputed at the fill-session open.">
+        <Panel className="span-6" title={`Sell side: exits, trims, short sales (${sells.length})`} pad={false} source="Estimated at the signal-session close, priced at close × (1 − slippage). Includes selling longs and opening/increasing shorts. Actual sizes are recomputed at the fill-session open.">
           <OrdersTable rows={sells} />
         </Panel>
-        <Panel className="span-6" title={`Proposed buys (${buys.length})`} pad={false} source="Estimated at the signal-session close with buys priced at close × (1 + slippage), whole shares, rank order. Actual sizes recomputed at the open.">
+        <Panel className="span-6" title={`Buy side: covers, entries, adds (${buys.length})`} pad={false} source="Estimated at the signal-session close, priced at close × (1 + slippage), whole shares. Short covers execute before long buys. Actual sizes recomputed at the open.">
           <OrdersTable rows={buys} />
         </Panel>
 
         <Panel className="span-12" title="Target portfolio (frozen signal)" pad={false}
-          source="Top-ranked eligible stocks at the signal session with their 12–1 momentum, raw close (USD) and 20-session ADV (USD millions). Equal target weights.">
+          source="Targets frozen at the signal session: rank, side, 12–1 momentum, realized vol (annualized), shrunk beta, raw close (USD) and 20-session ADV (USD millions). Long-short weights are inverse-vol with per-name caps; long-only weights are equal.">
           <DataTable<S["PlanTarget"]> data={plan.targets} maxHeight={320} initialSort={[{ id: "rank", desc: false }]}
             cols={[
               { id: "rank", header: "Rank", align: "right", value: (r) => r.rank },
               { id: "symbol", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
+              { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "short" ? "orange" : "blue"}>{r.side ?? "long"}</Badge> },
               { id: "mom", header: "12–1 mom", align: "right", value: (r) => r.momentum, cell: (r) => fmtPct(r.momentum, 1, true) },
+              { id: "vol", header: "Vol", align: "right", value: (r) => r.vol, cell: (r) => (r.vol == null ? "—" : fmtPct(r.vol, 0)) },
+              { id: "beta", header: "Beta", align: "right", value: (r) => r.beta, cell: (r) => (r.beta == null ? "—" : r.beta.toFixed(2)) },
               { id: "close", header: "Close $", align: "right", value: (r) => r.close_raw, cell: (r) => fmtPx(r.close_raw) },
               { id: "adv", header: "ADV20", align: "right", value: (r) => r.adv20, cell: (r) => fmtMillions(r.adv20) },
-              { id: "cw", header: "Current wt", align: "right", value: (r) => r.current_weight, cell: (r) => fmtPct(r.current_weight, 2) },
-              { id: "tw", header: "Target wt", align: "right", value: (r) => r.target_weight, cell: (r) => fmtPct(r.target_weight, 2) },
+              { id: "cw", header: "Current wt", align: "right", value: (r) => r.current_weight, cell: (r) => fmtPct(r.current_weight, 2, true) },
+              { id: "tw", header: "Target wt", align: "right", value: (r) => r.target_weight, cell: (r) => fmtPct(r.target_weight, 2, true) },
             ]} />
         </Panel>
 
@@ -213,6 +232,33 @@ function PlanView({ plan }: { plan: S["PlanDetail"] }) {
   );
 }
 
+function Sizing({ d, est, cfg }: { d: Diag; est: Estimate; cfg: StrategyConfig }) {
+  const cg = d.crash_guard;
+  return (
+    <Panel className="span-12" title="Long-short sizing (frozen at the signal)" label="Paper Simulation"
+      source="Beta-neutral books scaled to the ex-ante volatility target using trailing daily returns of the proposed weights; bounded by gross limits and per-name caps. The crash guard shrinks the short book in bear, high-volatility markets.">
+      <div className="kpi-strip" style={{ border: "none" }}>
+        <Kpi label="Long gross" value={fmtPct(d.long_gross, 1)} sub={`${d.long_names} names · max ${fmtPct(d.max_long_weight, 2)} (cap ${fmtPct(cfg.max_long_weight, 0)})`} />
+        <Kpi label="Short gross" value={fmtPct(d.short_gross, 1)} sub={`${d.short_names} names · max ${fmtPct(d.max_short_weight, 2)} (cap ${fmtPct(cfg.max_short_weight, 0)})`} />
+        <Kpi label="Net exposure" value={fmtPct(d.net_exposure, 1, true)} sub={`bounds ${fmtPct(cfg.min_side_gross, 0)}–${fmtPct(cfg.max_side_gross, 0)} per side`} />
+        <Kpi label="Betas L / S" value={`${d.beta_long?.toFixed(2)} / ${d.beta_short?.toFixed(2)}`} sub={`ratio ${d.beta_ratio?.toFixed(2)} · net β ${d.ex_ante_net_beta?.toFixed(3)}`}
+          tip="Short gross = long gross × β_long / β_short, so the book's ex-ante beta is zero (unless the crash guard scales the shorts down)." />
+        <Kpi label="Ex-ante vol" value={fmtPct(d.ex_ante_vol, 1)} sub={`target ${fmtPct(d.vol_target, 0)} · unit ${fmtPct(d.unit_vol, 0)}`}
+          tip="Annualized stdev of the proposed portfolio's trailing 126-session daily returns." />
+        <Kpi label="Crash guard" value={cg?.active ? "ON" : cg?.enabled ? "off" : "disabled"}
+          sub={`mkt 24m ${cg?.market_return == null ? "n/a" : fmtPct(cg.market_return, 1, true)} · 6m vol ${cg?.market_vol == null ? "n/a" : fmtPct(cg.market_vol, 0)}`} />
+      </div>
+      {(d.binding?.length || d.notes?.length || est.stopped_shorts_excluded?.length) ? (
+        <Stack gap={2} mt={6}>
+          {d.binding?.map((b, i) => <Text key={`b${i}`} size="10px" c="yellow.5">• Binding: {b}</Text>)}
+          {d.notes?.filter((n) => !d.binding?.includes(n)).map((n, i) => <Text key={`n${i}`} size="10px" c="dimmed">• {n}</Text>)}
+          {est.stopped_shorts_excluded?.length ? <Text size="10px" c="dimmed">• Not re-shorted after stop-loss: {est.stopped_shorts_excluded.join(", ")}</Text> : null}
+        </Stack>
+      ) : null}
+    </Panel>
+  );
+}
+
 function OrdersTable({ rows }: { rows: S["PlanOrderModel"][] }) {
   return (
     <DataTable<S["PlanOrderModel"]> data={rows} maxHeight={300} empty="None"
@@ -223,7 +269,8 @@ function OrdersTable({ rows }: { rows: S["PlanOrderModel"][] }) {
         { id: "q", header: "Est qty", align: "right", value: (r) => r.est_shares, cell: (r) => fmtNum(r.est_shares) },
         { id: "px", header: "Est px", align: "right", value: (r) => r.est_price, cell: (r) => fmtPx(r.est_price) },
         { id: "v", header: "Est value", align: "right", value: (r) => r.est_value, cell: (r) => fmtUsd(r.est_value) },
-        { id: "w", header: "Wt → tgt", align: "right", value: (r) => r.target_weight, cell: (r) => `${fmtPct(r.current_weight, 1)} → ${fmtPct(r.target_weight, 1)}` },
+        { id: "eff", header: "Effect", value: (r) => r.note, cell: (r) => <Text size="10px" c="dimmed">{r.note}</Text> },
+        { id: "w", header: "Wt → tgt", align: "right", value: (r) => r.target_weight, cell: (r) => `${fmtPct(r.current_weight, 1, true)} → ${fmtPct(r.target_weight, 1, true)}` },
         { id: "st", header: "Order", value: (r) => r.order_status, cell: (r) => r.order_status
             ? <Badge size="xs" variant="light" color={r.order_status === "filled" ? "teal" : r.order_status === "pending" ? "blue" : "yellow"} title={r.order_reason ?? ""}>{r.order_status}</Badge>
             : <Text size="10px" c="dimmed">not applied</Text> },
@@ -233,7 +280,8 @@ function OrdersTable({ rows }: { rows: S["PlanOrderModel"][] }) {
 
 function WeightsChart({ plan }: { plan: S["PlanDetail"] }) {
   const option = useMemo(() => {
-    const t = plan.targets.map((x) => ({ sym: x.symbol, cur: x.current_weight, tgt: x.target_weight }));
+    const ordered = [...plan.targets.filter((x) => x.target_weight > 0), ...plan.targets.filter((x) => x.target_weight < 0).reverse()];
+    const t = ordered.map((x) => ({ sym: x.symbol, cur: x.current_weight, tgt: x.target_weight }));
     const exits = plan.orders.filter((o) => o.target_weight === 0).map((o) => ({ sym: o.symbol, cur: o.current_weight, tgt: 0 }));
     const all = [...t, ...exits];
     const base = baseOption();
@@ -266,13 +314,24 @@ function PaperConfigButton() {
         {!cfg ? <Loading /> : (
           <Stack gap={8}>
             <Alert color="blue" variant="light"><Text size="xs">Changes create a new config version that applies to <b>future</b> rebalance plans only. Past signals, plans and fills are never rewritten.</Text></Alert>
+            <Text size="xs">Mode: <b>{cfg.mode === "long_short" ? "Long-short v2" : "Long-only v1"}</b> (to switch modes, archive and re-initialize the portfolio)</Text>
             <SimpleGrid cols={3} spacing={8}>
-              <NumberInput label="Top N" value={cfg.top_n} onChange={set("top_n")} min={1} max={1000} />
+              {cfg.mode === "long_only" && <NumberInput label="Top N" value={cfg.top_n} onChange={set("top_n")} min={1} max={1000} />}
               <NumberInput label="Min price (USD)" value={cfg.min_price} onChange={set("min_price")} min={0} decimalScale={2} />
               <NumberInput label="Min ADV (USD)" value={cfg.min_adv_usd} onChange={set("min_adv_usd")} min={0} step={1e6} thousandSeparator="," />
               <NumberInput label="Slippage (bps)" value={cfg.slippage_bps} onChange={set("slippage_bps")} min={0} max={500} />
               <NumberInput label="Commission / fill (USD)" value={cfg.commission_per_order} onChange={set("commission_per_order")} min={0} decimalScale={2} />
               <NumberInput label="Commission (bps)" value={cfg.commission_bps} onChange={set("commission_bps")} min={0} />
+              {cfg.mode === "long_short" && (
+                <>
+                  <NumberInput label="Vol target (fraction)" value={cfg.target_vol} onChange={set("target_vol")} min={0.01} max={1} step={0.01} decimalScale={3} />
+                  <NumberInput label="Max gross / side" value={cfg.max_side_gross} onChange={set("max_side_gross")} min={0.05} max={2} step={0.05} decimalScale={2} />
+                  <NumberInput label="Min gross / side" value={cfg.min_side_gross} onChange={set("min_side_gross")} min={0} max={2} step={0.05} decimalScale={2} />
+                  <NumberInput label="Borrow fee / yr" value={cfg.borrow_fee_annual} onChange={set("borrow_fee_annual")} min={0} max={1} step={0.001} decimalScale={4} />
+                  <NumberInput label="Short stop (fraction)" value={cfg.short_stop_loss ?? ""} onChange={set("short_stop_loss")} min={0.01} max={10} step={0.05} decimalScale={2} />
+                  <NumberInput label="Short min price $" value={cfg.short_min_price} onChange={set("short_min_price")} min={0} decimalScale={2} />
+                </>
+              )}
             </SimpleGrid>
             <Text size="10px" c="dimmed">Config versions used so far: {data?.history.length ?? 0} change(s). Current config id #{data?.config_id}.</Text>
             <Group justify="flex-end">

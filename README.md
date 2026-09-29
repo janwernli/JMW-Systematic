@@ -2,7 +2,10 @@
 
 A locally hosted **US-equities cross-sectional momentum** research terminal and **internal paper simulator**.
 
-- Historical **backtests** of one precisely defined strategy (12–1 month momentum, top 50, equal weight, monthly).
+- Historical **backtests** of a precisely defined 12–1 month cross-sectional momentum strategy in two modes:
+  - **Long-short v2** (default): beta-neutral decile books with inverse-volatility weights, a volatility target, a crash guard, borrow fees and a short stop-loss.
+  - **Long-only v1**: top 50 names, equal weight.
+  Both rebalance monthly.
 - A forward-running **internal virtual portfolio** funded with $100,000 of simulated cash.
 - Research and operational dashboards (six screens).
 - A market-data adapter interface (demo fixture built in, Alpaca optional). **No broker orders are ever placed.**
@@ -226,6 +229,10 @@ It only *reads* data: bars, corporate actions and the asset list. It never calls
    ```bash
    npm run import-data
    ```
+   - The **first** import chooses the universe and then **freezes** it. Later refreshes fetch only the last 10 stored sessions onward for the same symbols, which also picks up late corrections.
+   - To re-download the full history for the frozen universe, run `npm run import-data -- --full`.
+   - To choose a new universe, delete `data/momentum.db` (this also removes the paper portfolio) and import again.
+   - Requests always end at the **latest completed** NYSE session, so a half-finished daily bar is never stored. This also respects the free plan's 15-minute restriction.
 4. Restart `npm run dev`.
    - The UI switches to **Delayed Market Data** and shows a red **SURVIVORSHIP BIAS** ribbon.
    - Initialize a new virtual portfolio from the Command Center. Demo and Alpaca portfolios are kept separately.
@@ -241,7 +248,7 @@ It only *reads* data: bars, corporate actions and the asset list. It never calls
 | Adjustments | The app requests `adjustment=raw` and applies splits and dividends itself from the corporate-actions endpoint |
 | Rate limits | The adapter retries on HTTP 429 using the `X-RateLimit-Reset` header, and retries 5xx and network errors with exponential backoff |
 | Timestamps | Daily bars are mapped to the New York session date |
-| Missing features | No ETF/share-class field: common stocks are identified by a documented **name/symbol heuristic**. No sector data: sector exposure is hidden. Not a point-in-time security master: delisted names are largely missing. |
+| Missing features | No ETF/share-class field. Common stocks are identified by a documented **name/symbol heuristic** (`classify_asset`) that excludes ETFs/ETNs, closed-end funds and trusts, notes, preferreds, ADRs, SPACs, warrants, units and rights, and keeps share classes such as BRK.B and REITs. No sector data, so sector exposure is hidden. Not a point-in-time security master, so delisted names are largely missing. |
 
 **Consequence:** backtests on Alpaca data are **survivorship-biased**, and the UI says so everywhere.
 An unbiased whole-market study needs a point-in-time dataset with delisted securities and historical membership (for example CRSP, Norgate, or Sharadar via Nasdaq Data Link).
@@ -255,7 +262,7 @@ npm run test:backend     # backend only
 npm run build            # production frontend build (tsc + vite)
 ```
 
-The suite has 59 tests, built on small constructed datasets with hand-computed expected numbers. It covers:
+The suite has 85 tests, built on small constructed datasets with hand-computed expected numbers. It covers:
 
 - `test_signals.py`: the exact 12–1 lookback (t−21 / t−252 sessions), measuring by exchange sessions rather than a stock's own rows, the history requirement, splits and dividends inside the lookback, the raw-price filter, the liquidity window, tie-breaks, exclusions, **no look-ahead**, and coverage blocking.
 - `test_execution.py`: whole shares and residual cash, **sell-before-buy**, slippage and commission arithmetic, no substitution of a missing open, cash-limited partial fills, and no-leverage invariants.
@@ -263,6 +270,7 @@ The suite has 59 tests, built on small constructed datasets with hand-computed e
 - `test_calendar.py`: NYSE holidays (Good Friday, New Year), early closes, session offsets, and the latest completed session.
 - `test_backtest.py`: fills at the next open after a holiday, no trading without an open, no look-ahead at the NAV level, gross = net + costs, NAV = cash + positions, repeatable runs, and metric formulas.
 - `test_ledger.py`: **persistence across a restart**, duplicate-application prevention, DB-level immutability, config changes that affect only future plans, cash reconciliation, and a paper ledger that **exactly matches the backtest**.
+- `test_long_short.py`: water-fill caps, short-sale cash and marks, dividends and split fractions on shorts, borrow-fee arithmetic, the order reduce → short → cover → buy (including a long-to-short flip), signed cost basis, stop-loss thresholds and covers, disjoint decile books with minimum names, the rank buffer, the $10 short floor, beta neutrality, the crash guard, per-name caps, and a long-short paper ledger that exactly matches the backtest, stop-loss included.
 - `test_data_quality.py`: stale-data detection, a rebalance blocked on insufficient coverage, a halt on a session with no bars, and the missing-key error state.
 - `test_alpaca_provider.py`: pagination, raw adjustment, session dates, 429/5xx retries, auth errors, and corporate-action mapping, all against a mocked HTTP transport.
 - `test_api.py`: the end-to-end demo flow over HTTP, including the demo paper ledger matching a backtest exactly.
@@ -385,9 +393,29 @@ Provider ──► store.run_import ──► instruments · bars (raw OHLCV) ·
 
 Migrations live in `backend/app/db/migrations/NNNN_*.sql`. They are applied automatically and idempotently at startup.
 
-## 12. Strategy rules (v1)
+## 12. Strategy rules
 
 All defaults are adjustable in the Research Lab. The paper portfolio's copy of these settings is changed via **Paper config**.
+Both modes share the universe, the signal, the eligibility filters, the timing and the costs in the v1 table below.
+
+### Long-short v2 (default, `mode = "long_short"`)
+
+| Rule | Definition |
+|---|---|
+| Books | Long the top **10%** and short the bottom **10%** of eligible stocks by 12–1 momentum. **At least 50 and at most 100 names per side**, filled with the next ranks or trimmed to the best ranks, and never more than half the eligible names. |
+| Buffer | Stocks enter at the top/bottom 10%. A held long stays while it ranks in the top **30%**, and a held short stays while it ranks in the bottom 30%. |
+| Short eligibility | Raw close **> $10**, and the stock must not have been stopped out since the previous signal |
+| Weights | Proportional to **1 / realized volatility**, using the trailing 126 sessions (~6 months) of daily total returns. Caps are **2% of NAV per long** and **1% per short**; any excess is redistributed (water-filling). |
+| Beta neutrality | Short gross = long gross × β_long / β_short, where betas are the weighted averages of 252-session betas vs. the benchmark, shrunk 33% toward 1. The book's ex-ante beta is therefore zero. This is **not** dollar-neutral. |
+| Volatility target | Long gross = 10% ÷ annualized vol of the beta-neutral unit portfolio's trailing 126-session daily returns, bounded to **50–75% of NAV per side** and **150% total**. If per-name caps make neutrality impossible above the 50% minimum, the minimum is relaxed; caps and neutrality take priority, and the vol target stays a ceiling. The binding constraint is shown with each plan. |
+| Crash guard | If the benchmark's trailing 504-session (~24-month) total return is negative **and** its 126-session realized vol is above **20%** annualized, the short book is multiplied by **0.5**. The book is then deliberately net long beta. |
+| Short costs | **0.5%/yr borrow fee** (an assumption) accrued daily on short market value. Dividends are **paid** on shorts on the ex-date. Short proceeds are held as cash earning 0%. |
+| Stop-loss | If a short's close is **≥ 50% above its average entry price**, it is covered automatically at the **next open**. It cannot be re-shorted until the next monthly signal. If the open is missing, the cover is retried at the following open. |
+| Execution order | Reduce/exit longs, then open shorts (both raise cash), then cover shorts, then buy longs in rank order |
+
+Two choices here are mine, and both are configurable. "Market vol is high" means above 20% annualized. The buffer is interpreted as "stay while within the top/bottom 30%".
+
+### Long-only v1 (`mode = "long_only"`)
 
 | Rule | Definition |
 |---|---|
@@ -409,19 +437,20 @@ All defaults are adjustable in the Research Lab. The paper portfolio's copy of t
 
 ## 13. Execution, accounting and metrics
 
-**Event order per session** (identical in the backtest and the paper ledger):
+**Event order per session** (identical in the backtest and the paper ledger, which a test verifies to the cent):
 
 1. **Pre-open.** Ex-date splits adjust share counts; fractional shares are paid as cash-in-lieu at the prior mark ÷ ratio.
-   Cash dividends are credited on shares held × amount, on the ex-date. The pay-date lag is not modelled.
-2. **Open.** An applied or pending plan executes.
+   Cash dividends are credited on shares held × amount, on the ex-date. Shorts have negative share counts, so they pay dividends and split fractions. The pay-date lag is not modelled.
+2. **Open.** Short stop-loss covers triggered at the previous close execute first. Then an applied or pending plan executes.
    - Compute `NAV_open = cash + Σ shares × open`. A holding without an open is valued at its pre-open mark and flagged.
    - `target_shares = floor((w × NAV_open − commission) / (open × (1 + slippage)))`
    - **Sells first**, in symbol order: full exits, then trims. Fill price is `open × (1 − slippage)`.
    - **Buys second**, in rank order: fill price is `open × (1 + slippage)`. If cash runs short, the largest affordable whole-share quantity is bought.
    - What remains is residual cash.
 3. **Close.** A holding on its final trading session is converted to cash at its last close. This is an assumption; real delisting proceeds can be lower.
-4. **Close.** NAV = cash + Σ shares × raw close. If a stock has no bar, the last close is carried forward, restated for any actions, and flagged as stale.
-5. **After close.** On the last session of the month, signals are formed and frozen, and a plan is created.
+4. **Close.** Borrow fees are charged on short market value. NAV = cash + Σ shares × raw close, where short market value is negative. If a stock has no bar, the last close is carried forward, restated for any actions, and flagged as stale.
+5. **Close.** Each short's close is checked against its stop-loss.
+6. **After close.** On the last session of the month, signals are formed and frozen, and a plan is created.
 
 **No double counting of dividends.** Signals use the total-return index. Valuation uses **raw** prices, and dividends are credited to cash explicitly. Adjusted prices are never used for valuation.
 
@@ -437,7 +466,9 @@ All defaults are adjustable in the Research Lab. The paper portfolio's copy of t
 | Drawdown | `NAV_t / max(NAV_0..t) − 1` |
 | Turnover (one-way) | `(buys + sells) / 2 / NAV_open` |
 | Difference vs benchmark | Strategy total return − benchmark total return. This is **a simple difference, not a statistically estimated alpha**. |
-| Gross NAV | Net NAV + cumulative slippage and commissions (not compounded) |
+| Gross NAV | Net NAV + cumulative slippage, commissions and borrow fees (not compounded) |
+| Gross / net exposure | (long value + \|short value\|) / NAV and (long − \|short\|) / NAV |
+| Realized beta | cov(strategy, benchmark) / var(benchmark) of daily returns. This describes the past; it is not a forecast. |
 | Monthly return | Last NAV of month / last NAV of the prior month − 1 |
 
 ## 14. Limitations of the data and the backtest
@@ -446,6 +477,12 @@ All defaults are adjustable in the Research Lab. The paper portfolio's copy of t
 - **Alpaca data is not point-in-time.**
   - The universe comes from today's asset list, and optionally from today's liquidity ranking, so delisted losers are missing.
   - Backtests on it are survivorship-biased and look-ahead-biased in their selection. The UI shows a permanent warning.
+- **Universe selection bias on Alpaca.** By default the universe is *today's* 600 most liquid common stocks. That bias massively inflates long-winner results.
+  In one run from 2017-01 to 2026-09, long-only v1 showed +2,798%, which is not credible.
+  For long-short, the short book contains only losers that *survived*, and those tend to rebound. This biases short-side results *downward*.
+  Treat all historical results on this data as illustrations, not evidence.
+- **Shorting realism.** Borrow availability, locates, recalls, hard-to-borrow fees, short-sale restrictions, margin calls and interest on short proceeds are not modelled. Borrow cost is a flat assumption.
+- **Stop-losses** are checked on daily closes only, not intraday, and fill at the next open, which can gap well beyond the stop level.
 - **Security classification** on Alpaca is heuristic (name/symbol patterns), so some ETFs or preferreds may slip through, or some common stocks may be excluded.
 - **Costs are assumptions**, not observed executions:
   - Opening auctions can be less liquid than assumed.

@@ -1592,6 +1592,50 @@
             ],
             "title": "Max Drawdown"
           },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "long_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Gross"
+          },
+          "short_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Short Gross"
+          },
+          "net_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Exposure"
+          },
           "next_rebalance": {
             "$ref": "#/components/schemas/NextRebalance"
           },
@@ -2313,6 +2357,17 @@
               }
             ],
             "title": "Created At"
+          },
+          "position_effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Effect"
           }
         },
         "type": "object",
@@ -2639,8 +2694,31 @@
             "title": "Id"
           },
           "plan_id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Plan Id"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin",
+            "default": "plan"
+          },
+          "trigger_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Session"
           },
           "symbol": {
             "type": "string",
@@ -3272,6 +3350,50 @@
           "current_weight": {
             "type": "number",
             "title": "Current Weight"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Side"
+          },
+          "vol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol"
+          },
+          "beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta"
+          },
+          "percentile": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percentile"
           }
         },
         "type": "object",
@@ -3366,6 +3488,10 @@
           "symbol": {
             "type": "string",
             "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
           },
           "name": {
             "anyOf": [
@@ -3485,6 +3611,7 @@
         "type": "object",
         "required": [
           "symbol",
+          "side",
           "name",
           "sector",
           "shares",
@@ -3544,6 +3671,22 @@
             "type": "array",
             "title": "Rows"
           },
+          "long_gross": {
+            "type": "number",
+            "title": "Long Gross"
+          },
+          "short_gross": {
+            "type": "number",
+            "title": "Short Gross"
+          },
+          "net_exposure": {
+            "type": "number",
+            "title": "Net Exposure"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
           "sector_exposure": {
             "anyOf": [
               {
@@ -3586,6 +3729,10 @@
           "cash",
           "cash_weight",
           "rows",
+          "long_gross",
+          "short_gross",
+          "net_exposure",
+          "mode",
           "sector_exposure",
           "sector_note",
           "concentration",
@@ -4214,6 +4361,18 @@
             },
             "type": "array",
             "title": "Unfilled"
+          },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnostics"
           }
         },
         "type": "object",
@@ -4304,6 +4463,39 @@
           "positions": {
             "type": "integer",
             "title": "Positions"
+          },
+          "long_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Gross"
+          },
+          "short_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Short Gross"
+          },
+          "net_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Exposure"
           },
           "rolling_return": {
             "anyOf": [
@@ -4495,6 +4687,16 @@
           "weight": {
             "type": "number",
             "title": "Weight"
+          },
+          "long_weight": {
+            "type": "number",
+            "title": "Long Weight",
+            "default": 0.0
+          },
+          "short_weight": {
+            "type": "number",
+            "title": "Short Weight",
+            "default": 0.0
           },
           "positions": {
             "type": "integer",
@@ -4836,6 +5038,16 @@
       },
       "StrategyConfig": {
         "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "long_only",
+              "long_short"
+            ],
+            "title": "Mode",
+            "description": "Strategy variant",
+            "default": "long_short"
+          },
           "initial_capital": {
             "type": "number",
             "maximum": 10000000000.0,
@@ -4930,6 +5142,178 @@
             "description": "Share of the point-in-time universe that must have a bar at the signal session; otherwise the rebalance is blocked",
             "default": 0.9
           },
+          "long_pct": {
+            "type": "number",
+            "maximum": 0.5,
+            "exclusiveMinimum": 0.0,
+            "title": "Long Pct",
+            "description": "Enter longs from the top fraction of eligible stocks",
+            "default": 0.1
+          },
+          "short_pct": {
+            "type": "number",
+            "maximum": 0.5,
+            "exclusiveMinimum": 0.0,
+            "title": "Short Pct",
+            "description": "Enter shorts from the bottom fraction of eligible stocks",
+            "default": 0.1
+          },
+          "min_names_per_side": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Min Names Per Side",
+            "description": "Minimum names per book (filled by next ranks)",
+            "default": 50
+          },
+          "max_names_per_side": {
+            "type": "integer",
+            "maximum": 1000.0,
+            "minimum": 1.0,
+            "title": "Max Names Per Side",
+            "description": "Maximum names per book (best ranks kept)",
+            "default": 100
+          },
+          "buffer_exit_pct": {
+            "type": "number",
+            "maximum": 0.5,
+            "exclusiveMinimum": 0.0,
+            "title": "Buffer Exit Pct",
+            "description": "Buffer: a held long stays while in the top fraction, a held short while in the bottom fraction",
+            "default": 0.3
+          },
+          "vol_lookback_sessions": {
+            "type": "integer",
+            "maximum": 504.0,
+            "minimum": 20.0,
+            "title": "Vol Lookback Sessions",
+            "description": "Realized-vol window (sessions), ~6 months",
+            "default": 126
+          },
+          "beta_lookback_sessions": {
+            "type": "integer",
+            "maximum": 756.0,
+            "minimum": 60.0,
+            "title": "Beta Lookback Sessions",
+            "description": "Beta estimation window (sessions)",
+            "default": 252
+          },
+          "beta_shrink": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Beta Shrink",
+            "description": "Beta shrinkage toward 1.0 (Vasicek-style)",
+            "default": 0.33
+          },
+          "target_vol": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Target Vol",
+            "description": "Annualized portfolio volatility target (ex-ante, trailing)",
+            "default": 0.1
+          },
+          "min_side_gross": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Min Side Gross",
+            "description": "Minimum gross per side, fraction of NAV",
+            "default": 0.5
+          },
+          "max_side_gross": {
+            "type": "number",
+            "maximum": 2.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Side Gross",
+            "description": "Maximum gross per side, fraction of NAV",
+            "default": 0.75
+          },
+          "max_total_gross": {
+            "type": "number",
+            "maximum": 4.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Total Gross",
+            "description": "Cap on long + short gross, fraction of NAV",
+            "default": 1.5
+          },
+          "max_long_weight": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Long Weight",
+            "description": "Per-name cap on longs, fraction of NAV",
+            "default": 0.02
+          },
+          "max_short_weight": {
+            "type": "number",
+            "maximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Short Weight",
+            "description": "Per-name cap on shorts, fraction of NAV",
+            "default": 0.01
+          },
+          "short_min_price": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Short Min Price",
+            "description": "Raw close must exceed this to be shorted, USD",
+            "default": 10.0
+          },
+          "borrow_fee_annual": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Borrow Fee Annual",
+            "description": "Assumed borrow cost on short market value, per year",
+            "default": 0.005
+          },
+          "short_stop_loss": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 10.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Short Stop Loss",
+            "description": "Cover a short when its close is this fraction above entry (fill next open)",
+            "default": 0.5
+          },
+          "crash_guard": {
+            "type": "boolean",
+            "title": "Crash Guard",
+            "description": "Scale down the short book in bear/high-vol markets",
+            "default": true
+          },
+          "crash_market_lookback_sessions": {
+            "type": "integer",
+            "maximum": 2000.0,
+            "minimum": 21.0,
+            "title": "Crash Market Lookback Sessions",
+            "description": "Market return window (~24 months)",
+            "default": 504
+          },
+          "crash_market_vol_threshold": {
+            "type": "number",
+            "maximum": 2.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Crash Market Vol Threshold",
+            "description": "Market 6-month realized vol deemed 'high'",
+            "default": 0.2
+          },
+          "crash_short_scale": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Crash Short Scale",
+            "description": "Short-book multiplier when the crash guard is on",
+            "default": 0.5
+          },
           "start_date": {
             "anyOf": [
               {
@@ -4970,7 +5354,7 @@
         "additionalProperties": false,
         "type": "object",
         "title": "StrategyConfig",
-        "description": "All tunable inputs of the 12-1 momentum strategy.\n\nDefaults are the documented v1 specification. Every backtest run and every\npaper-portfolio configuration version stores the full JSON of this model."
+        "description": "All tunable inputs of the 12-1 momentum strategy.\n\nmode=\"long_only\"  -> v1: top_n winners, equal weight, cash-funded, no shorts.\nmode=\"long_short\" -> v2: decile winners long / decile losers short with a\n    rank buffer, inverse-volatility weights with per-name caps, beta-neutral\n    books scaled to a volatility target within gross limits, a momentum-crash\n    guard, a $10 short price floor, borrow fees and a short stop-loss.\nEvery backtest run and every paper-portfolio configuration version stores the\nfull JSON of this model."
       },
       "SystemStatus": {
         "properties": {
@@ -5166,6 +5550,12 @@
             "type": "object",
             "title": "Reason Counts"
           },
+          "diagnostics": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Diagnostics",
+            "default": {}
+          },
           "rows": {
             "items": {
               "$ref": "#/components/schemas/UniverseRow"
@@ -5285,10 +5675,55 @@
             "type": "boolean",
             "title": "Selected"
           },
+          "side": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Side",
+            "description": "long | short | None in this live ranking"
+          },
+          "percentile": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percentile"
+          },
+          "vol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vol"
+          },
+          "beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta"
+          },
           "model_weight": {
             "type": "number",
             "title": "Model Weight",
-            "description": "Equal weight if selected by this live ranking"
+            "description": "Signed target weight in this live ranking (negative = short)"
           },
           "plan_target_weight": {
             "anyOf": [

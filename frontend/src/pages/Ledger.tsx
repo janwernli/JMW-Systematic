@@ -34,6 +34,7 @@ export function Ledger() {
               { id: "s", header: "Session", value: (r) => r.session },
               { id: "sym", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
               { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "buy" ? "blue" : "orange"}>{r.side}</Badge> },
+              { id: "eff", header: "Effect", value: (r) => r.position_effect, cell: (r) => (r.position_effect ?? "").replace("_", " ") },
               { id: "q", header: "Shares", align: "right", value: (r) => r.shares, cell: (r) => fmtNum(r.shares) },
               { id: "ref", header: "Open", align: "right", value: (r) => r.ref_price, cell: (r) => fmtPx(r.ref_price) },
               { id: "fp", header: "Fill", align: "right", value: (r) => r.fill_price, cell: (r) => fmtPx(r.fill_price) },
@@ -45,10 +46,12 @@ export function Ledger() {
             ]} />
         </Tabs.Panel>
         <Tabs.Panel value="orders" pt={10}>
-          <Paged<S["OrderModel"]> kind="orders" title="Internal orders" source="Created when a plan is applied; status set once at the fill session (pending → filled / partially filled / unfilled / no trade)."
+          <Paged<S["OrderModel"]> kind="orders" title="Internal orders" source="Plan orders are created when a plan is applied; stop-loss covers are created automatically when a short closes at or above its stop and fill at the next open. Status is set once at the fill session (pending → filled / partially filled / unfilled / no trade)."
             cols={[
               { id: "id", header: "#", align: "right", value: (r) => r.id },
-              { id: "plan", header: "Plan", align: "right", value: (r) => r.plan_id, cell: (r) => `#${r.plan_id}` },
+              { id: "plan", header: "Origin", value: (r) => r.plan_id ?? r.origin, cell: (r) => (r.origin === "stop_loss"
+                  ? <Badge size="xs" color="red" variant="light" title={`Triggered at close of ${r.trigger_session}`}>stop-loss</Badge>
+                  : `plan #${r.plan_id}`) },
               { id: "sym", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
               { id: "side", header: "Intended", value: (r) => r.intended_side },
               { id: "tw", header: "Target wt", align: "right", value: (r) => r.target_weight, cell: (r) => fmtPct(r.target_weight, 2) },
@@ -60,7 +63,7 @@ export function Ledger() {
             ]} />
         </Tabs.Panel>
         <Tabs.Panel value="cash" pt={10}>
-          <Paged<S["CashTx"]> kind="cash" title="Cash transactions" source="Every movement of virtual cash with running balance: deposit, buys, sells, commissions, dividends (ex-date), cash-in-lieu, delisting cash-outs."
+          <Paged<S["CashTx"]> kind="cash" title="Cash transactions" source="Every movement of virtual cash with running balance: deposit, buys and covers, sells and short sales, commissions, dividends (received on longs, paid on shorts, ex-date), cash-in-lieu, delisting close-outs and assumed borrow fees."
             cols={[
               { id: "id", header: "#", align: "right", value: (r) => r.id },
               { id: "s", header: "Session", value: (r) => r.session },

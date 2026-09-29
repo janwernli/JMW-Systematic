@@ -51,6 +51,11 @@ export function CommandCenter() {
               tip="Benchmark total-return index from raw closes + dividends over the portfolio's life." />
             <Kpi label="Difference" value={fmtPct(data.return_difference, 2, true)} tone={data.return_difference}
               sub="simple difference, not alpha" tip="Portfolio return minus benchmark return over the same sessions. Not a risk-adjusted or statistically estimated alpha." />
+            {data.mode === "long_short" && (
+              <Kpi label="Gross / net" value={`${fmtPct((data.long_gross ?? 0) + (data.short_gross ?? 0), 0)} / ${fmtPct(data.net_exposure, 1, true)}`}
+                sub={`long ${fmtPct(data.long_gross, 0)} · short ${fmtPct(data.short_gross, 0)}`}
+                tip="Long and |short| market value as a share of NAV at the valuation close. Beta-neutral sizing, not dollar-neutral." />
+            )}
             <Kpi label="Drawdown" value={fmtPct(data.drawdown, 2)} sub={`max ${fmtPct(data.max_drawdown, 2)}`}
               tip="NAV / running peak NAV − 1, from daily closes since inception." />
             <Kpi label="Next rebalance" value={data.next_rebalance.signal_session ?? "—"}
@@ -139,7 +144,7 @@ export function CommandCenter() {
                 cols={[
                   { id: "s", header: "Session", value: (r) => r.session },
                   { id: "sym", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
-                  { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "buy" ? "blue" : "orange"}>{r.side}</Badge> },
+                  { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "buy" ? "blue" : "orange"}>{{ open_short: "short", close_short: "cover" }[r.position_effect ?? ""] ?? r.side}</Badge> },
                   { id: "q", header: "Shares", align: "right", value: (r) => r.shares },
                   { id: "px", header: "Fill px", align: "right", value: (r) => r.fill_price, cell: (r) => fmtPx(r.fill_price) },
                   { id: "v", header: "Value", align: "right", value: (r) => r.gross_value, cell: (r) => fmtUsd(r.gross_value, true) },

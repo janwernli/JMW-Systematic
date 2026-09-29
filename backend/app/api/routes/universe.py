@@ -34,9 +34,9 @@ def universe(session: str | None = Query(None, description="Signal session (defa
     if s not in panel.sess_index:
         raise HTTPException(400, f"{s} is not a stored trading session ({panel.sessions[0]}..{panel.sessions[-1]}).")
     t = panel.sess_index[s]
-    sig = compute_signals(panel, t, cfg)
-
     shares: dict[str, int] = ctx.ledger.positions(port["id"]) if port else {}
+    held_long = {x for x, q in shares.items() if q > 0}
+    held_short = {x for x, q in shares.items() if q < 0}
     nav = None
     marks: dict[str, float] = {}
     if port:
@@ -45,6 +45,7 @@ def universe(session: str | None = Query(None, description="Signal session (defa
         nav = last["nav"] if last else None
         if last and last["session"] in panel.sess_index:
             marks = marks_at(panel, panel.sess_index[last["session"]], shares)
+    sig = compute_signals(panel, t, cfg, held_long, held_short)
     plan = latest_plan(ctx, port["id"]) if port else None
     plan_w: dict[str, float] = {}
     if plan and plan["signal_set_id"]:
@@ -62,6 +63,9 @@ def universe(session: str | None = Query(None, description="Signal session (defa
             "asset_type": r.asset_type, "close_raw": r.close_raw, "adv20": r.adv20, "momentum": r.momentum,
             "rank": None if str(r.rank) == "<NA>" else int(r.rank), "eligible": bool(r.eligible), "reason": r.reason,
             "reason_text": REASONS.get(r.reason, r.reason), "selected": bool(r.selected),
+            "side": r.side if isinstance(r.side, str) else None,
+            "percentile": None if r.percentile != r.percentile else float(r.percentile),
+            "vol": None if r.vol != r.vol else float(r.vol), "beta": None if r.beta != r.beta else float(r.beta),
             "model_weight": float(r.target_weight), "plan_target_weight": plan_w.get(sym, 0.0) if plan else None,
             "position_shares": q, "current_weight": (q * marks.get(sym, 0.0) / nav) if nav else 0.0,
         })
@@ -70,13 +74,14 @@ def universe(session: str | None = Query(None, description="Signal session (defa
     return {
         "data_label": ctx.data_label(), "signal_session": s, "is_month_end": ctx.calendar.is_month_end(s),
         "basis_note": ("Recomputed from stored data for the frozen plan's signal session." if frozen else
-                       "Indicative ranking recomputed after the close of this session with the paper config. "
-                       "Only month-end signals drive rebalances."),
+                       "Indicative ranking recomputed after the close of this session with the paper config "
+                       "(current holdings feed the rank buffer). Only month-end signals drive rebalances."),
         "plan_signal_session": plan["signal_session"] if plan else None,
         "portfolio_as_of": port["as_of_session"] if port else None, "config": cfg,
         "universe_count": sig.universe_count, "eligible_count": sig.eligible_count,
         "selected_count": sig.selected_count, "coverage": sig.coverage, "blocked_reason": sig.blocked_reason,
         "reason_counts": {str(k): int(v) for k, v in counts.items()}, "rows": rows,
+        "diagnostics": sig.diagnostics,
     }
 
 

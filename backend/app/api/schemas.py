@@ -126,7 +126,11 @@ class UniverseRow(BaseModel):
     reason: str
     reason_text: str
     selected: bool
-    model_weight: float = Field(description="Equal weight if selected by this live ranking")
+    side: str | None = Field(None, description="long | short | None in this live ranking")
+    percentile: float | None = None
+    vol: float | None = None
+    beta: float | None = None
+    model_weight: float = Field(description="Signed target weight in this live ranking (negative = short)")
     plan_target_weight: float | None = Field(description="Target weight in the latest frozen paper plan")
     position_shares: int
     current_weight: float
@@ -146,6 +150,7 @@ class UniverseResponse(BaseModel):
     coverage: float
     blocked_reason: str | None
     reason_counts: dict[str, int]
+    diagnostics: dict = {}
     rows: list[UniverseRow]
 
 
@@ -249,6 +254,7 @@ class FillModel(BaseModel):
     order_id: int | None = None
     reason: str | None = None
     created_at: str | None = None
+    position_effect: str | None = None
 
 
 class EventModel(BaseModel):
@@ -289,6 +295,10 @@ class CommandCenter(BaseModel):
     return_difference: float | None
     drawdown: float | None
     max_drawdown: float | None
+    mode: str | None = None
+    long_gross: float | None = None
+    short_gross: float | None = None
+    net_exposure: float | None = None
     next_rebalance: NextRebalance
     nav_series: list[NavPoint]
     top_movers: list[Mover]
@@ -301,6 +311,7 @@ class CommandCenter(BaseModel):
 
 class PositionRow(BaseModel):
     symbol: str
+    side: str
     name: str | None
     sector: str | None
     shares: int
@@ -322,6 +333,8 @@ class PositionRow(BaseModel):
 class SectorExposure(BaseModel):
     sector: str
     weight: float
+    long_weight: float = 0.0
+    short_weight: float = 0.0
     positions: int
 
 
@@ -342,6 +355,10 @@ class PositionsResponse(BaseModel):
     cash: float
     cash_weight: float
     rows: list[PositionRow]
+    long_gross: float
+    short_gross: float
+    net_exposure: float
+    mode: str
     sector_exposure: list[SectorExposure] | None
     sector_note: str
     concentration: Concentration
@@ -408,6 +425,10 @@ class PlanTarget(BaseModel):
     adv20: float
     target_weight: float
     current_weight: float
+    side: str | None = None
+    vol: float | None = None
+    beta: float | None = None
+    percentile: float | None = None
 
 
 class PlanSummary(BaseModel):
@@ -487,6 +508,9 @@ class RunSeriesPoint(BaseModel):
     benchmark_drawdown: float | None
     cash_weight: float
     positions: int
+    long_gross: float | None = None
+    short_gross: float | None = None
+    net_exposure: float | None = None
     rolling_return: float | None
     rolling_vol: float | None
     rolling_bench_return: float | None
@@ -514,6 +538,7 @@ class RunRebalance(BaseModel):
     commission: float | None
     cash_after: float | None
     unfilled: list[dict]
+    diagnostics: dict | None = None
 
 
 class Page(BaseModel):
@@ -528,7 +553,9 @@ class FillsPage(Page):
 
 class OrderModel(BaseModel):
     id: int
-    plan_id: int
+    plan_id: int | None
+    origin: str = "plan"
+    trigger_session: str | None = None
     symbol: str
     intended_side: str
     target_weight: float

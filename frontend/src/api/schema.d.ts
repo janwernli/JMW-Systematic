@@ -631,6 +631,14 @@ export interface components {
             drawdown: number | null;
             /** Max Drawdown */
             max_drawdown: number | null;
+            /** Mode */
+            mode?: string | null;
+            /** Long Gross */
+            long_gross?: number | null;
+            /** Short Gross */
+            short_gross?: number | null;
+            /** Net Exposure */
+            net_exposure?: number | null;
             next_rebalance: components["schemas"]["NextRebalance"];
             /** Nav Series */
             nav_series: components["schemas"]["NavPoint"][];
@@ -818,6 +826,8 @@ export interface components {
             reason?: string | null;
             /** Created At */
             created_at?: string | null;
+            /** Position Effect */
+            position_effect?: string | null;
         };
         /** FillsPage */
         FillsPage: {
@@ -912,7 +922,14 @@ export interface components {
             /** Id */
             id: number;
             /** Plan Id */
-            plan_id: number;
+            plan_id: number | null;
+            /**
+             * Origin
+             * @default plan
+             */
+            origin: string;
+            /** Trigger Session */
+            trigger_session?: string | null;
             /** Symbol */
             symbol: string;
             /** Intended Side */
@@ -1111,6 +1128,14 @@ export interface components {
             target_weight: number;
             /** Current Weight */
             current_weight: number;
+            /** Side */
+            side?: string | null;
+            /** Vol */
+            vol?: number | null;
+            /** Beta */
+            beta?: number | null;
+            /** Percentile */
+            percentile?: number | null;
         };
         /** PortfolioMeta */
         PortfolioMeta: {
@@ -1143,6 +1168,8 @@ export interface components {
         PositionRow: {
             /** Symbol */
             symbol: string;
+            /** Side */
+            side: string;
             /** Name */
             name: string | null;
             /** Sector */
@@ -1195,6 +1222,14 @@ export interface components {
             cash_weight: number;
             /** Rows */
             rows: components["schemas"]["PositionRow"][];
+            /** Long Gross */
+            long_gross: number;
+            /** Short Gross */
+            short_gross: number;
+            /** Net Exposure */
+            net_exposure: number;
+            /** Mode */
+            mode: string;
             /** Sector Exposure */
             sector_exposure: components["schemas"]["SectorExposure"][] | null;
             /** Sector Note */
@@ -1399,6 +1434,10 @@ export interface components {
             unfilled: {
                 [key: string]: unknown;
             }[];
+            /** Diagnostics */
+            diagnostics?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** RunRequest */
         RunRequest: {
@@ -1424,6 +1463,12 @@ export interface components {
             cash_weight: number;
             /** Positions */
             positions: number;
+            /** Long Gross */
+            long_gross?: number | null;
+            /** Short Gross */
+            short_gross?: number | null;
+            /** Net Exposure */
+            net_exposure?: number | null;
             /** Rolling Return */
             rolling_return: number | null;
             /** Rolling Vol */
@@ -1474,6 +1519,16 @@ export interface components {
             sector: string;
             /** Weight */
             weight: number;
+            /**
+             * Long Weight
+             * @default 0
+             */
+            long_weight: number;
+            /**
+             * Short Weight
+             * @default 0
+             */
+            short_weight: number;
             /** Positions */
             positions: number;
         };
@@ -1558,10 +1613,22 @@ export interface components {
          * StrategyConfig
          * @description All tunable inputs of the 12-1 momentum strategy.
          *
-         *     Defaults are the documented v1 specification. Every backtest run and every
-         *     paper-portfolio configuration version stores the full JSON of this model.
+         *     mode="long_only"  -> v1: top_n winners, equal weight, cash-funded, no shorts.
+         *     mode="long_short" -> v2: decile winners long / decile losers short with a
+         *         rank buffer, inverse-volatility weights with per-name caps, beta-neutral
+         *         books scaled to a volatility target within gross limits, a momentum-crash
+         *         guard, a $10 short price floor, borrow fees and a short stop-loss.
+         *     Every backtest run and every paper-portfolio configuration version stores the
+         *     full JSON of this model.
          */
         StrategyConfig: {
+            /**
+             * Mode
+             * @description Strategy variant
+             * @default long_short
+             * @enum {string}
+             */
+            mode: "long_only" | "long_short";
             /**
              * Initial Capital
              * @description Starting virtual cash, USD
@@ -1634,6 +1701,132 @@ export interface components {
              * @default 0.9
              */
             min_session_coverage: number;
+            /**
+             * Long Pct
+             * @description Enter longs from the top fraction of eligible stocks
+             * @default 0.1
+             */
+            long_pct: number;
+            /**
+             * Short Pct
+             * @description Enter shorts from the bottom fraction of eligible stocks
+             * @default 0.1
+             */
+            short_pct: number;
+            /**
+             * Min Names Per Side
+             * @description Minimum names per book (filled by next ranks)
+             * @default 50
+             */
+            min_names_per_side: number;
+            /**
+             * Max Names Per Side
+             * @description Maximum names per book (best ranks kept)
+             * @default 100
+             */
+            max_names_per_side: number;
+            /**
+             * Buffer Exit Pct
+             * @description Buffer: a held long stays while in the top fraction, a held short while in the bottom fraction
+             * @default 0.3
+             */
+            buffer_exit_pct: number;
+            /**
+             * Vol Lookback Sessions
+             * @description Realized-vol window (sessions), ~6 months
+             * @default 126
+             */
+            vol_lookback_sessions: number;
+            /**
+             * Beta Lookback Sessions
+             * @description Beta estimation window (sessions)
+             * @default 252
+             */
+            beta_lookback_sessions: number;
+            /**
+             * Beta Shrink
+             * @description Beta shrinkage toward 1.0 (Vasicek-style)
+             * @default 0.33
+             */
+            beta_shrink: number;
+            /**
+             * Target Vol
+             * @description Annualized portfolio volatility target (ex-ante, trailing)
+             * @default 0.1
+             */
+            target_vol: number;
+            /**
+             * Min Side Gross
+             * @description Minimum gross per side, fraction of NAV
+             * @default 0.5
+             */
+            min_side_gross: number;
+            /**
+             * Max Side Gross
+             * @description Maximum gross per side, fraction of NAV
+             * @default 0.75
+             */
+            max_side_gross: number;
+            /**
+             * Max Total Gross
+             * @description Cap on long + short gross, fraction of NAV
+             * @default 1.5
+             */
+            max_total_gross: number;
+            /**
+             * Max Long Weight
+             * @description Per-name cap on longs, fraction of NAV
+             * @default 0.02
+             */
+            max_long_weight: number;
+            /**
+             * Max Short Weight
+             * @description Per-name cap on shorts, fraction of NAV
+             * @default 0.01
+             */
+            max_short_weight: number;
+            /**
+             * Short Min Price
+             * @description Raw close must exceed this to be shorted, USD
+             * @default 10
+             */
+            short_min_price: number;
+            /**
+             * Borrow Fee Annual
+             * @description Assumed borrow cost on short market value, per year
+             * @default 0.005
+             */
+            borrow_fee_annual: number;
+            /**
+             * Short Stop Loss
+             * @description Cover a short when its close is this fraction above entry (fill next open)
+             * @default 0.5
+             */
+            short_stop_loss: number | null;
+            /**
+             * Crash Guard
+             * @description Scale down the short book in bear/high-vol markets
+             * @default true
+             */
+            crash_guard: boolean;
+            /**
+             * Crash Market Lookback Sessions
+             * @description Market return window (~24 months)
+             * @default 504
+             */
+            crash_market_lookback_sessions: number;
+            /**
+             * Crash Market Vol Threshold
+             * @description Market 6-month realized vol deemed 'high'
+             * @default 0.2
+             */
+            crash_market_vol_threshold: number;
+            /**
+             * Crash Short Scale
+             * @description Short-book multiplier when the crash guard is on
+             * @default 0.5
+             */
+            crash_short_scale: number;
             /**
              * Start Date
              * @description Backtest start (ISO date); ignored by the paper ledger
@@ -1709,6 +1902,13 @@ export interface components {
             reason_counts: {
                 [key: string]: number;
             };
+            /**
+             * Diagnostics
+             * @default {}
+             */
+            diagnostics: {
+                [key: string]: unknown;
+            };
             /** Rows */
             rows: components["schemas"]["UniverseRow"][];
         };
@@ -1739,8 +1939,19 @@ export interface components {
             /** Selected */
             selected: boolean;
             /**
+             * Side
+             * @description long | short | None in this live ranking
+             */
+            side?: string | null;
+            /** Percentile */
+            percentile?: number | null;
+            /** Vol */
+            vol?: number | null;
+            /** Beta */
+            beta?: number | null;
+            /**
              * Model Weight
-             * @description Equal weight if selected by this live ranking
+             * @description Signed target weight in this live ranking (negative = short)
              */
             model_weight: number;
             /**

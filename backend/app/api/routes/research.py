@@ -23,6 +23,8 @@ def _headline(m: dict | None) -> dict | None:
             "gross_total_return": m["gross"]["total_return"], "ann_vol": m["net"]["ann_vol"],
             "max_drawdown": m["net"]["max_drawdown"], "benchmark_total_return": b.get("total_return"),
             "return_difference": m.get("return_difference"), "avg_turnover": m.get("avg_turnover"),
+            "mode": m.get("mode", "long_only"), "realized_beta": m.get("realized_beta"),
+            "avg_gross_exposure": m.get("avg_gross_exposure"),
             "start": m["start_session"], "end": m["end_session"]}
 
 
@@ -98,6 +100,10 @@ def run_series(run_id: int, ctx: AppContext = Depends(get_ctx)):
         "session": s, "nav": r.nav, "gross_nav": r.gross_nav, "benchmark_nav": f(r.benchmark_nav),
         "drawdown": float(dd[s]), "benchmark_drawdown": f(bdd[s]) if bdd is not None else None,
         "cash_weight": r.cash / r.nav if r.nav else 0.0, "positions": int(r.positions),
+        "long_gross": f(r.long_value / r.nav) if r.nav and r.long_value == r.long_value and r.long_value is not None else None,
+        "short_gross": f(-r.short_value / r.nav) if r.nav and r.short_value == r.short_value and r.short_value is not None else None,
+        "net_exposure": f((r.long_value + r.short_value) / r.nav)
+        if r.nav and r.long_value is not None and r.short_value is not None and r.long_value == r.long_value else None,
         "rolling_return": f(roll.at[s, "rolling_return"]), "rolling_vol": f(roll.at[s, "rolling_vol"]),
         "rolling_bench_return": f(roll.at[s, "rolling_bench_return"]),
         "rolling_difference": f(roll.at[s, "rolling_difference"]),
@@ -140,4 +146,5 @@ def run_rebalances(run_id: int, ctx: AppContext = Depends(get_ctx)):
     rows = ctx.db.query("SELECT * FROM backtest_rebalances WHERE run_id=? ORDER BY signal_session DESC", (run_id,))
     for r in rows:
         r["unfilled"] = loads(r.pop("unfilled_json"), [])
+        r["diagnostics"] = loads(r.pop("diagnostics_json", None), None)
     return rows

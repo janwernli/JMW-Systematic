@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Badge, Button, Checkbox, Code, Group, NumberInput, Progress, SimpleGrid, Stack, Tabs, Text, TextInput } from "@mantine/core";
+import { Alert, Badge, Button, Checkbox, Code, Divider, Group, NumberInput, Progress, SegmentedControl, SimpleGrid, Stack, Switch, Tabs, Text, TextInput } from "@mantine/core";
 import { IconPlayerPlay } from "@tabler/icons-react";
 import { useQueries } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
@@ -19,6 +19,9 @@ type Metrics = {
   rebalances_executed: number; rebalances_blocked: number; avg_turnover: number | null; annualized_turnover: number | null;
   total_costs: number; cost_drag: number | null; avg_positions: number; avg_cash_weight: number;
   benchmark_symbol: string | null; benchmark_return_basis: string | null;
+  mode?: string; avg_long_gross?: number; avg_short_gross?: number; avg_gross_exposure?: number; avg_net_exposure?: number;
+  max_gross_exposure?: number; realized_beta?: number; correlation?: number; borrow_fees?: number;
+  short_dividends_paid?: number; stop_losses?: number; crash_guard_months?: number;
 };
 type Stat = { total_return: number | null; cagr: number | null; ann_vol: number | null; ret_vol_ratio: number | null; max_drawdown: number | null; max_dd_peak: string | null; max_dd_trough: string | null };
 
@@ -98,23 +101,64 @@ function SettingsForm({ d, onLaunched }: { d: S["ResearchDefaults"]; onLaunched:
   const [name, setName] = useState("");
   const launch = useLaunchRun();
   const num = (k: keyof StrategyConfig) => (v: string | number) => setCfg((c) => ({ ...c, [k]: v === "" ? c[k] : Number(v) }));
+  // percentages are edited as % in the form and stored as fractions
+  const pct = (k: keyof StrategyConfig) => ({
+    value: +(((cfg[k] as number) ?? 0) * 100).toFixed(4),
+    onChange: (v: string | number) => setCfg((c) => ({ ...c, [k]: v === "" ? c[k] : Number(v) / 100 })),
+  });
+  const ls = cfg.mode === "long_short";
   return (
     <Panel title="Backtest settings" label="Backtest"
-      source={`Dates are NYSE sessions within stored data (${d.earliest_start} … ${d.latest_end}); the first ${d.config.lookback_sessions} sessions are needed for the lookback. Costs are ASSUMPTIONS, not observed executions.`}>
+      source={`Dates are NYSE sessions within stored data (${d.earliest_start} … ${d.latest_end}); the first ${d.config.lookback_sessions} sessions are needed for the lookback. Costs and borrow fees are ASSUMPTIONS, not observed executions.`}>
       <Stack gap={6}>
+        <SegmentedControl fullWidth value={cfg.mode} onChange={(v) => setCfg((c) => ({ ...c, mode: v as StrategyConfig["mode"] }))}
+          data={[{ value: "long_short", label: "Long-short v2" }, { value: "long_only", label: "Long-only v1" }]} />
         <SimpleGrid cols={2} spacing={6}>
           <TextInput label="Start" type="date" value={cfg.start_date ?? ""} min={d.earliest_start} max={d.latest_end}
             onChange={(e) => { const v = e.currentTarget.value; setCfg((c) => ({ ...c, start_date: v || null })); }} />
           <TextInput label="End" type="date" value={cfg.end_date ?? ""} min={d.earliest_start} max={d.latest_end}
             onChange={(e) => { const v = e.currentTarget.value; setCfg((c) => ({ ...c, end_date: v || null })); }} />
-          <NumberInput label="Holdings (top N)" value={cfg.top_n} onChange={num("top_n")} min={1} max={1000} />
           <NumberInput label="Initial capital $" value={cfg.initial_capital} onChange={num("initial_capital")} min={1000} step={10000} thousandSeparator="," />
+          {!ls && <NumberInput label="Holdings (top N)" value={cfg.top_n} onChange={num("top_n")} min={1} max={1000} />}
           <NumberInput label="Min ADV $" value={cfg.min_adv_usd} onChange={num("min_adv_usd")} min={0} step={1e6} thousandSeparator="," />
           <NumberInput label="Min price $" value={cfg.min_price} onChange={num("min_price")} min={0} decimalScale={2} />
           <NumberInput label="Slippage (bps)" value={cfg.slippage_bps} onChange={num("slippage_bps")} min={0} max={500} />
           <NumberInput label="Commission $/fill" value={cfg.commission_per_order} onChange={num("commission_per_order")} min={0} decimalScale={2} />
         </SimpleGrid>
-        <TextInput label="Run name (optional)" value={name} onChange={(e) => setName(e.currentTarget.value)} placeholder={`Top ${cfg.top_n} / ${cfg.slippage_bps}bps`} />
+        {ls && (
+          <>
+            <Divider label="Books" labelPosition="left" />
+            <SimpleGrid cols={2} spacing={6}>
+              <NumberInput label="Long top %" {...pct("long_pct")} min={1} max={50} suffix="%" />
+              <NumberInput label="Short bottom %" {...pct("short_pct")} min={1} max={50} suffix="%" />
+              <NumberInput label="Min names / side" value={cfg.min_names_per_side} onChange={num("min_names_per_side")} min={1} max={1000} />
+              <NumberInput label="Max names / side" value={cfg.max_names_per_side} onChange={num("max_names_per_side")} min={1} max={1000} />
+              <NumberInput label="Buffer exit %" {...pct("buffer_exit_pct")} min={1} max={50} suffix="%" />
+              <NumberInput label="Short min price $" value={cfg.short_min_price} onChange={num("short_min_price")} min={0} decimalScale={2} />
+            </SimpleGrid>
+            <Divider label="Sizing" labelPosition="left" />
+            <SimpleGrid cols={2} spacing={6}>
+              <NumberInput label="Vol target %" {...pct("target_vol")} min={1} max={100} suffix="%" />
+              <NumberInput label="Total gross cap %" {...pct("max_total_gross")} min={10} max={400} suffix="%" />
+              <NumberInput label="Min gross / side %" {...pct("min_side_gross")} min={0} max={200} suffix="%" />
+              <NumberInput label="Max gross / side %" {...pct("max_side_gross")} min={1} max={200} suffix="%" />
+              <NumberInput label="Cap per long %" {...pct("max_long_weight")} min={0.1} max={100} decimalScale={2} suffix="%" />
+              <NumberInput label="Cap per short %" {...pct("max_short_weight")} min={0.1} max={100} decimalScale={2} suffix="%" />
+            </SimpleGrid>
+            <Divider label="Short risk" labelPosition="left" />
+            <SimpleGrid cols={2} spacing={6}>
+              <NumberInput label="Borrow fee %/yr" {...pct("borrow_fee_annual")} min={0} max={100} decimalScale={2} suffix="%" />
+              <NumberInput label="Short stop-loss %" value={cfg.short_stop_loss == null ? "" : +(cfg.short_stop_loss * 100).toFixed(2)}
+                onChange={(v) => setCfg((c) => ({ ...c, short_stop_loss: v === "" ? null : Number(v) / 100 }))} min={1} max={1000} suffix="%" placeholder="off" />
+              <NumberInput label="Crash: market vol >" {...pct("crash_market_vol_threshold")} min={1} max={200} suffix="%" disabled={!cfg.crash_guard} />
+              <NumberInput label="Crash: short scale" value={cfg.crash_short_scale} onChange={num("crash_short_scale")} min={0} max={1} step={0.1} decimalScale={2} disabled={!cfg.crash_guard} />
+            </SimpleGrid>
+            <Switch size="xs" label="Crash guard (bear market + high vol → shrink short book)" checked={cfg.crash_guard}
+              onChange={(e) => { const v = e.currentTarget.checked; setCfg((c) => ({ ...c, crash_guard: v })); }} />
+          </>
+        )}
+        <TextInput label="Run name (optional)" value={name} onChange={(e) => setName(e.currentTarget.value)}
+          placeholder={ls ? `L/S ${Math.round(cfg.long_pct * 100)}/${Math.round(cfg.short_pct * 100)} vol ${Math.round(cfg.target_vol * 100)}%` : `Long-only top ${cfg.top_n}`} />
         <Button leftSection={<IconPlayerPlay size={14} />} loading={launch.isPending}
           onClick={() => launch.mutate({ config: cfg, name: name || null }, { onSuccess: (r) => onLaunched(r.id) })}>
           Run backtest
@@ -158,12 +202,25 @@ function RunView({ id }: { id: number }) {
           sub={m.benchmark_return_basis === "total_return" ? `total return · CAGR ${fmtPct(m.benchmark?.cagr, 2)}` : "PRICE RETURN ONLY"} />
         <Kpi label="Difference" value={fmtPct(m.return_difference, 1, true)} tone={m.return_difference} sub="simple difference, not alpha" />
         <Kpi label="Turnover" value={fmtPct(m.avg_turnover, 1)} sub={`per rebalance · ${m.annualized_turnover ? `${fmtPct(m.annualized_turnover, 0)}/yr` : "—"}`} tip="One-way: (buys + sells) / 2 / NAV at the rebalance open." />
-        <Kpi label="Assumed costs" value={fmtUsd(m.total_costs)} sub={`drag ${fmtPct(m.cost_drag, 2)} of capital`} />
+        <Kpi label="Assumed costs" value={fmtUsd(m.total_costs + (m.borrow_fees ?? 0))}
+          sub={m.borrow_fees ? `trading ${fmtUsd(m.total_costs)} · borrow ${fmtUsd(m.borrow_fees)}` : `drag ${fmtPct(m.cost_drag, 2)} of capital`} />
+        {m.mode === "long_short" && (
+          <>
+            <Kpi label="Avg gross / net" value={`${fmtPct(m.avg_gross_exposure, 0)} / ${fmtPct(m.avg_net_exposure, 0, true)}`}
+              sub={`long ${fmtPct(m.avg_long_gross, 0)} · short ${fmtPct(m.avg_short_gross, 0)}`}
+              tip="(long market value + |short market value|) / NAV and (long − |short|) / NAV, averaged over daily closes." />
+            <Kpi label="Realized beta" value={m.realized_beta?.toFixed(2) ?? "—"} sub={`corr ${m.correlation?.toFixed(2) ?? "—"} vs ${bench ?? "benchmark"}`}
+              tip="cov(strategy, benchmark) / var(benchmark) of daily returns over the run (descriptive, not a forecast)." />
+            <Kpi label="Short stops / crash guard" value={`${m.stop_losses ?? 0} / ${m.crash_guard_months ?? 0}`}
+              sub={`stop-loss covers · months guard ON · dividends paid ${fmtUsd(m.short_dividends_paid ?? 0)}`} />
+          </>
+        )}
       </div>
 
       <Tabs defaultValue={params.get("tab") ?? "equity"} keepMounted={false} variant="outline" radius="sm">
         <Tabs.List>
           <Tabs.Tab value="equity">Equity & drawdown</Tabs.Tab>
+          {m.mode === "long_short" && <Tabs.Tab value="exposure">Exposure</Tabs.Tab>}
           <Tabs.Tab value="rolling">Rolling metrics</Tabs.Tab>
           <Tabs.Tab value="monthly">Monthly returns</Tabs.Tab>
           <Tabs.Tab value="trades">Trades</Tabs.Tab>
@@ -183,6 +240,9 @@ function RunView({ id }: { id: number }) {
               </Panel>
             </Stack>
           )}
+        </Tabs.Panel>
+        <Tabs.Panel value="exposure" pt={10}>
+          {!pts.length ? <Loading /> : <ExposureChart pts={pts} />}
         </Tabs.Panel>
         <Tabs.Panel value="rolling" pt={10}>
           {!pts.length ? <Loading /> : <Rolling pts={pts} bench={bench} />}
@@ -229,6 +289,28 @@ gross NAV         net NAV + cumulative slippage & commission (not compounded)`}<
         </Tabs.Panel>
       </Tabs>
     </>
+  );
+}
+
+function ExposureChart({ pts }: { pts: S["RunSeriesPoint"][] }) {
+  const option = useMemo(() => {
+    const base = baseOption();
+    return {
+      ...base,
+      tooltip: { ...(base.tooltip as object), valueFormatter: (v: number) => fmtPct(v, 1) },
+      xAxis: timeAxis(pts.map((p) => p.session)), yAxis: valueAxis((v: number) => `${(v * 100).toFixed(0)}%`), dataZoom: zoom,
+      series: [
+        lineSeries("Long gross", pts.map((p) => p.long_gross ?? null), C.strategy),
+        lineSeries("Short gross", pts.map((p) => p.short_gross ?? null), C.benchmark, { lineStyle: { width: 1.5, color: C.benchmark } }),
+        lineSeries("Net exposure", pts.map((p) => p.net_exposure ?? null), C.gross, { lineStyle: { width: 1.5, color: C.gross, type: [4, 3] } }),
+      ],
+    };
+  }, [pts]);
+  return (
+    <Panel title="Exposure (% of NAV)" label="Backtest"
+      source="Daily long market value / NAV, |short market value| / NAV, and net = long − short. Sizing targets beta neutrality (not dollar neutrality), so net dollar exposure is usually non-zero.">
+      <EChart option={option} height={300} />
+    </Panel>
   );
 }
 
@@ -282,6 +364,7 @@ function Trades({ id }: { id: number }) {
               { id: "sym", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
               { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "buy" ? "blue" : "orange"}>{r.side}</Badge> },
               { id: "why", header: "Reason", value: (r) => r.reason },
+              { id: "eff", header: "Effect", value: (r) => r.position_effect, cell: (r) => (r.position_effect ?? "").replace("_", " ") },
               { id: "q", header: "Shares", align: "right", value: (r) => r.shares, cell: (r) => fmtNum(r.shares) },
               { id: "ref", header: "Open", align: "right", value: (r) => r.ref_price, cell: (r) => fmtPx(r.ref_price) },
               { id: "fp", header: "Fill", align: "right", value: (r) => r.fill_price, cell: (r) => fmtPx(r.fill_price) },
@@ -305,7 +388,7 @@ function Rebalances({ id }: { id: number }) {
   const { data } = useRunRebalances(id, true);
   if (!data) return <Loading />;
   return (
-    <Panel title="Rebalance log" label="Backtest" pad={false} source="One row per month-end signal. warmup = insufficient history; blocked = data insufficient (see warnings).">
+    <Panel title="Rebalance log" label="Backtest" pad={false} source="One row per month-end signal. warmup = insufficient history; blocked = data insufficient (see warnings). Long-short columns show book sizes, gross per side after sizing, ex-ante volatility and the crash-guard state.">
       <DataTable<S["RunRebalance"]> data={data} maxHeight={480}
         cols={[
           { id: "sig", header: "Signal", value: (r) => r.signal_session },
@@ -318,6 +401,14 @@ function Rebalances({ id }: { id: number }) {
           { id: "to", header: "Turnover", align: "right", value: (r) => r.turnover, cell: (r) => fmtPct(r.turnover, 1) },
           { id: "c", header: "Costs", align: "right", value: (r) => (r.slippage_cost ?? 0) + (r.commission ?? 0), cell: (r) => fmtUsd((r.slippage_cost ?? 0) + (r.commission ?? 0), true) },
           { id: "cash", header: "Cash after", align: "right", value: (r) => r.cash_after, cell: (r) => fmtUsd(r.cash_after, true) },
+          { id: "ls", header: "L / S names", align: "right", value: (r) => (r.diagnostics?.long_names as number) ?? null,
+            cell: (r) => (r.diagnostics?.long_names != null ? `${r.diagnostics.long_names} / ${r.diagnostics.short_names}` : "—") },
+          { id: "g", header: "Gross L / S", align: "right", value: (r) => (r.diagnostics?.long_gross as number) ?? null,
+            cell: (r) => (r.diagnostics?.long_gross != null ? `${fmtPct(r.diagnostics.long_gross as number, 0)} / ${fmtPct(r.diagnostics.short_gross as number, 0)}` : "—") },
+          { id: "xv", header: "Ex-ante vol", align: "right", value: (r) => (r.diagnostics?.ex_ante_vol as number) ?? null,
+            cell: (r) => (r.diagnostics?.ex_ante_vol != null ? fmtPct(r.diagnostics.ex_ante_vol as number, 1) : "—") },
+          { id: "cg", header: "Crash", value: (r) => ((r.diagnostics?.crash_guard as { active?: boolean })?.active ? "on" : ""),
+            cell: (r) => ((r.diagnostics?.crash_guard as { active?: boolean })?.active ? <Badge size="xs" color="red" variant="light">ON</Badge> : "") },
           { id: "un", header: "Unfilled", align: "right", value: (r) => r.unfilled.length, cell: (r) => (r.unfilled.length ? <span className="warn" title={r.unfilled.map((u) => `${u.symbol}: ${u.reason}`).join("\n")}>{r.unfilled.length}</span> : "0") },
         ]} />
     </Panel>
@@ -356,7 +447,8 @@ function Compare({ ids, onClear }: { ids: number[]; onClear: () => void }) {
           cols={[
             { id: "id", header: "Run", value: (r) => r.run.id, cell: (r) => <b>#{r.run.id} {r.run.name}</b> },
             { id: "per", header: "Period", value: (r) => r.m.start_session, cell: (r) => `${r.m.start_session} → ${r.m.end_session}` },
-            { id: "n", header: "Top N", align: "right", value: (r) => r.run.config.top_n },
+            { id: "mode", header: "Mode", value: (r) => r.run.config.mode, cell: (r) => (r.run.config.mode === "long_short" ? "L/S" : "Long") },
+            { id: "n", header: "Top N", align: "right", value: (r) => r.run.config.top_n, cell: (r) => (r.run.config.mode === "long_short" ? "—" : r.run.config.top_n) },
             { id: "slip", header: "Slip bps", align: "right", value: (r) => r.run.config.slippage_bps },
             { id: "adv", header: "Min ADV", align: "right", value: (r) => r.run.config.min_adv_usd, cell: (r) => fmtMillions(r.run.config.min_adv_usd) },
             { id: "tr", header: "Net TR", align: "right", value: (r) => r.m.net.total_return, cell: (r) => <Signed v={r.m.net.total_return}>{fmtPct(r.m.net.total_return, 1, true)}</Signed> },
