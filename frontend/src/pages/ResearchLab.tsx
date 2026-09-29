@@ -332,6 +332,16 @@ function AlphaPanel({ id }: { id: number }) {
   return (
     <Panel title="Fama-French 5 + momentum regression" label="Backtest"
       source={`${data.model}. Source: ${data.source}. Alpha is the monthly intercept (×12 annualized); |t| > 2 is conventionally significant, but multiple testing and a biased universe (Alpaca: today's liquid stocks) make even that weak evidence.`}>
+      <Alert color="gray" variant="light" mb="sm" p="xs" title={data.excess_returns
+        ? "Dependent variable: strategy return − RF (this run: cash earns RF)"
+        : "Dependent variable: raw strategy return (this run: cash earns no interest)"}>
+        <Text size="xs">
+          {data.excess_returns
+            ? "This run credits the Ken French risk-free rate (ACT/360) on positive cash, so RF is subtracted before regressing: the alpha is the return beyond what the cash already earned."
+            : "By default backtest cash, including short proceeds, earns nothing. RF is therefore NOT subtracted: doing so would charge the strategy for interest it never received and understate alpha by roughly the average RF."}
+          {" "}Toggle <b>Cash earns RF</b> in the run settings to switch conventions; both give nearly the same alpha on a dollar-neutral book.
+        </Text>
+      </Alert>
       <div style={{ overflowX: "auto" }}>
         <table className="dt" style={{ minWidth: 640 }}>
           <thead>

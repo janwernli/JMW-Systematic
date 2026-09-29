@@ -63,11 +63,14 @@ def month_end_fixture():
     return cal, prov2, cal.sessions[m]
 
 
-def make_ctx(tmp_path, broker, enabled=True):
+def make_ctx(tmp_path, broker, enabled=True, mode="auto"):
+    """Most tests exercise sending; the approve-mode default is covered in test_approval.py."""
     cal, prov, latest = month_end_fixture()
     s = Settings(_env_file=None, DATABASE_PATH=str(tmp_path / "auto.db"), BROKER_TRADING_ENABLED=str(enabled).lower(),
                  SEC_USER_AGENT="", LOG_LEVEL="WARNING", LOG_FORMAT="text")
     ctx = AppContext(s, calendar=cal, provider=prov, broker=broker)
+    if mode is not None:
+        set_setting(ctx.db, "rebalance_mode", mode)
     fill = cal.next_session(latest)
     now = datetime.fromisoformat(fill).replace(hour=8, tzinfo=NY).astimezone(UTC)   # 08:00 ET on the fill day
     return ctx, cal, latest, fill, now

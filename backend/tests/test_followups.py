@@ -1,4 +1,5 @@
-"""Cash interest + alpha consistency, Norgate GICS sectors, crash guard before sector neutrality, manual approval."""
+"""Cash interest + alpha consistency, Norgate GICS sectors, crash guard before sector neutrality.
+(Approval mode: test_approval.py.)"""
 
 from datetime import timedelta
 
@@ -144,35 +145,26 @@ def test_crash_guard_applied_before_sector_neutralization():
     assert sn["final_max_abs_net"] <= cfg.max_sector_net + 1e-7
 
 
-# ---------------------------------------------------------------- manual approval
-def test_manual_approval_holds_rebalances_but_not_stops(tmp_path):
-    fb = FakeBroker()
-    ctx, cal, latest, fill, now = make_ctx(tmp_path, fb)
-    set_setting(ctx.db, "rebalance_approval", "manual")
-    DailyCycle(ctx, fb, now_fn=lambda: now).run(dry_run=True)       # learn the targets
-    plan, tw = targets(ctx)
-    panel = ctx.panel()
-    t = panel.sess_index[latest]
-    squeezed = next(s for s, w in tw.items() if w > 0)
-    fb.pos = {squeezed: (-10, float(panel.close[t, panel.sym_index[squeezed]]) / 1.6)}
-    DailyCycle(ctx, fb, now_fn=lambda: now + timedelta(minutes=5)).run()
-    assert [o["client_order_id"][:5] for o in fb.submits] == ["stop-"]           # only the stop-loss went out
-    waiting = ctx.db.query("SELECT * FROM broker_orders WHERE status='planned' AND status_reason LIKE 'awaiting approval%'")
-    assert waiting and all(o["origin"] == "rebalance" for o in waiting)
-    # approve -> the next run sends them under the same client ids
-    ctx.db.conn.execute("UPDATE broker_orders SET approved_at='2026-01-01' WHERE status='planned'")
-    DailyCycle(ctx, fb, now_fn=lambda: now + timedelta(minutes=10)).run()
-    sent = {o["client_order_id"] for o in fb.submits}
-    assert {o["client_order_id"] for o in waiting} <= sent
-
-
-def test_declined_orders_are_never_sent(tmp_path):
-    fb = FakeBroker()
-    ctx, cal, latest, fill, now = make_ctx(tmp_path, fb)
-    set_setting(ctx.db, "rebalance_approval", "manual")
-    DailyCycle(ctx, fb, now_fn=lambda: now).run()
-    n = ctx.db.conn.execute("UPDATE broker_orders SET status='declined' WHERE status='planned'").rowcount
-    assert n > 0
-    set_setting(ctx.db, "rebalance_approval", "auto")               # even switching back to auto ...
-    DailyCycle(ctx, fb, now_fn=lambda: now + timedelta(minutes=5)).run()
-    assert fb.submits == []                                          # ... declined orders are not regenerated
+def test_delisted_norgate_symbol_keeps_its_gics_sector_through_to_the_panel(tmp_path):
+    """Norgate names delisted securities like "ENRNQ-200411". SEC EDGAR does not know them, so an EDGAR lookup
+    would leave them Unclassified only because they later delisted (look-ahead). Norgate GICS classifies them."""
+    cal = weekday_calendar("2019-01-01", 420)
+    nd = fake_norgate(cal)
+    dead = "ENRNQ-200411"
+    base_prices, base_members, base_quoted = nd.price_timeseries, nd.index_constituent_timeseries, nd.last_quoted_date
+    nd.watchlist_symbols = lambda name: ["AAA", "OLD-202003", dead] if name == "Russell 1000 Current & Past" else []
+    nd.price_timeseries = lambda sym, *a, **kw: base_prices("OLD-202003" if sym == dead else sym, *a, **kw)
+    nd.index_constituent_timeseries = lambda sym, *a, **kw: base_members("OLD-202003" if sym == dead else sym, *a, **kw)
+    nd.last_quoted_date = lambda sym: base_quoted("OLD-202003" if sym == dead else sym)
+    gics = {"AAA": "Information Technology", "OLD-202003": "Utilities", dead: "Energy"}
+    nd.classification_at_level = lambda sym, scheme, rtype, level: gics.get(sym)
+    prov = NorgateProvider(nd=nd, history_start="2019-01-01")
+    inst = {i.symbol: i for i in prov.list_instruments()}
+    assert inst[dead].delist_date is not None and not inst[dead].active
+    assert inst[dead].sector == "Energy" and inst[dead].sector_source.startswith("Norgate GICS")
+    db = Database(tmp_path / "enron.db")
+    run_import(db, prov, cal, start="2019-01-01", end=cal.sessions[399])
+    assert db.scalar("SELECT sector FROM instruments WHERE symbol=?", (dead,)) == "Energy"
+    panel = get_panel(db, "norgate", cal, "SPY")
+    assert panel.instruments.at[dead, "sector"] == "Energy"
+    assert not any(s in (None, "", "Unclassified") for s in panel.instruments.loc[["AAA", "OLD-202003", dead], "sector"])

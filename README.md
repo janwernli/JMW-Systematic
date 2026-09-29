@@ -33,6 +33,7 @@ This is a locally hosted research terminal and **fully automated paper-trading s
 14. [Git and GitHub](#14-git-and-github)
 15. [Configuration reference](#15-configuration-reference)
 16. [Troubleshooting](#16-troubleshooting)
+17. [Running on an Azure VM](#17-running-on-an-azure-vm)
 
 ---
 
@@ -140,12 +141,15 @@ The cycle is idempotent, so running it several times a day is safe.
    - A long-to-short flip is split: close now, open at the next run. Alpaca rejects flipping a position in one order.
    - New shorts require Alpaca's `shortable` and `easy_to_borrow` flags; otherwise they are skipped and recorded.
    - Orders that expired unfilled are retried.
-6. **Approval.** Set on the Alpaca Paper page:
-   - **Auto** (default): rebalance orders are sent automatically.
-   - **Manual**: rebalance and catch-up orders wait as *awaiting approval* until you click **Approve & send** or **Decline**.
-     - Approving marks the orders and immediately runs a cycle. They are sent right away if it is 19:00–09:28 ET, otherwise at the next scheduled run.
-     - Declined orders are never regenerated for that plan.
-     - **Stop-loss covers are always automatic.**
+6. **Approval.** Set with **Rebalance mode** on the Alpaca Paper page (setting `rebalance_mode`):
+   - **Approve** (default): the month-end plan's orders stay *planned / awaiting approval*. A panel on the Trading page shows the plan (signal date, order count, buy/sell value).
+     - **Review & approve plan…** opens the **full order list**. **Approve all N orders** approves the whole plan at once and immediately runs a cycle.
+     - The orders are sent as market-on-open orders if it is 19:00–09:28 ET, as market orders during the fill session, otherwise at the next scheduled run.
+     - The approval covers the plan, so catch-up orders for the same plan (e.g. an order that expired unfilled) need no second approval.
+     - If the order list changed since you opened it, approval is refused and you review the new list.
+     - **Decline plan** skips that rebalance; its orders are never sent or regenerated.
+   - **Auto**: rebalance orders are sent without asking.
+   - **Stop-loss covers are automatic in both modes.**
 7. **Submit.** Orders are sent only when **all** of these hold: `BROKER_TRADING_ENABLED=true`, the dashboard's automation switch is ON, the data is fresh, and the run is not a dry run.
    - Between **19:00 and 09:28 ET** they are sent as market-on-open orders (opening auction).
    - If that window was missed but the fill session is trading, they are sent as a regular market order, flagged as late.
@@ -153,6 +157,8 @@ The cycle is idempotent, so running it several times a day is safe.
    - Every order carries a deterministic `client_order_id`, so it can never be sent twice.
 
 ### Schedule (Windows)
+
+For the always-on setup on an Azure VM with systemd timers, see [section 17](#17-running-on-an-azure-vm). Use one or the other, never both.
 
 ```bash
 npm run schedule:install   # registers two tasks for your user
@@ -180,7 +186,7 @@ npm run schedule:remove    # removes them
 |---|---|
 | **Wed 30 Sep, 16:00 ET** | Close of the last session of September. That close is the signal. |
 | **Wed 30 Sep, 23:30** | Sync only. The signal is not processed yet: bars are only trusted one hour after the close. |
-| **Thu 1 Oct, 14:00 (08:00 ET)** | Refreshes data, freezes the signal, sizes orders from account equity and submits market-on-open orders. |
+| **Thu 1 Oct, 14:00 (08:00 ET)** | Refreshes data, freezes the signal and sizes orders from account equity. In **Approve** mode the plan waits for you (ntfy: "plan awaiting approval"). Approve before **15:28 (09:28 ET)** to get the opening auction. In **Auto** mode the market-on-open orders are submitted directly. |
 | **Thu 1 Oct, 09:30 ET** | Orders fill in Alpaca's opening auction. |
 | **Thu 1 Oct, 23:30** | Syncs fills. The model ledger fills at the same open ± assumed slippage. |
 
@@ -289,7 +295,7 @@ These are the defaults; everything is adjustable in the Research Lab. The live/m
 - **Costs are assumptions.** Opening-auction liquidity, market impact and interest on short proceeds are not modelled.
 - **Sizes are small.** With $100k and 50–100 names per side, many positions are only a few shares, so rounding noise is noticeable.
 - **Stops are checked on daily closes** and fill at the next open, which can gap past the stop.
-- **Automation depends on this PC being on** at the scheduled times. Missed windows fall back to late market orders or the next run.
+- **Automation depends on the scheduler's machine being on** (the Azure VM, or this PC) at the scheduled times. Missed windows fall back to late market orders or the next run.
 - **The factor data lags** by about 1–2 months, and the most recent months are excluded from the alpha test.
 
 ## 11. Norgate Data (point-in-time Russell 1000)
@@ -335,7 +341,8 @@ The tables that were added for this version:
 - `broker_orders`: every order with its client id, status, fills and reason.
 - `broker_equity`, `broker_positions`, `broker_account_snapshots`: the Alpaca mirror.
 - `automation_runs`: a step-by-step log of each cycle.
-- `app_settings`: the automation switch.
+- `app_settings`: the automation switch and `rebalance_mode` (`approve` | `auto`).
+- `broker_plan_decisions`: your approve/decline decision per month-end plan.
 - Signal rows now also store the composite components, sector and 60-day ADV.
 
 ## 13. Tests
@@ -345,7 +352,7 @@ npm test              # backend pytest suite + frontend type-check
 npm run test:backend
 ```
 
-There are 136 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
+There are 155 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
 
 - **Composite signal:** winsorizing, the FIP arithmetic, residual momentum rewarding recent idiosyncratic drift but not beta, sector demeaning, and ranking by composite vs 12–1.
 - **Books and sizing:** the hard-to-borrow screen, the sector-neutral QP (limits, gross, beta, caps, and the reduced-gross fallback), the capacity warning, and loading of legacy configs.
@@ -353,11 +360,15 @@ There are 136 backend tests, built on constructed datasets with hand-checkable r
 - **Costs:** ACT/360 borrow fees.
 - **Alpha test:** Ken French parsing and Newey-West (matches OLS and White's estimator at lag 0), plus the full/half-sample alpha test.
 - **Automation:** opening-auction submission sized from equity, idempotency, dry run, both kill switches, stale-data blocking, stop-loss on actual shorts, flip splitting, the submission-window rules, and the paper-host lock.
-- **Follow-ups:** ACT/360 cash interest, the model ledger matching the backtest with interest on, the alpha regression matching the cash treatment, Norgate GICS sectors (including delisted symbols and legacy names), SEC not being used for Norgate, final sector nets after the crash guard, and manual approval (rebalances held but stops sent, approve sends, decline is final).
+- **Follow-ups:** ACT/360 cash interest, the model ledger matching the backtest with interest on, the alpha regression matching the cash treatment, Norgate GICS sectors (including delisted symbols such as `ENRNQ-200411` all the way into the panel, and legacy names), SEC not being used for Norgate, and final sector nets after the crash guard.
+- **Approval mode:** `approve` is the default (also for existing databases, via migration 0005). Rebalances are held while stop-losses are sent. Approving a plan sends every order and later catch-ups. A changed order list and a second decision are refused. A declined plan is never sent, even in `auto`. Stale drafts are superseded.
+- **VM operations:** ntfy messages (off without a topic; summary; stale-data, error and approval alerts; never raises), consistent SQLite backups with 14-day rotation while the database is open, the `migrate` and `backup` commands, and the deploy files (localhost-only single-worker unit, weekday New York timers, safe `.env.example` defaults).
 
 ## 14. Git and GitHub
 
-The repository is pushed to the private GitHub repo `janwernli/JMW-Systematic` (`origin`).
+The repository is pushed to the **public** GitHub repo `janwernli/JMW-Systematic` (`origin`). Keys, the database and logs are never committed (see below).
+
+Every push to `main` runs the **Frontend build** GitHub Action (`.github/workflows/frontend.yml`). It builds `frontend/dist` and publishes it as `frontend-dist.tar.gz`, with a SHA-256 file, on the rolling release `frontend-latest`. The Azure VM downloads it from there instead of running Node.
 
 ```bash
 git add -A && git commit -m "Describe the change" && git push
@@ -380,6 +391,8 @@ git add -A && git commit -m "Describe the change" && git push
 | `BROKER_TRADING_ENABLED` | `false` | Master switch for sending paper orders |
 | `SEC_USER_AGENT` | — | "Name contact@email" (SEC requirement) |
 | `NORGATE_INDEX` / `NORGATE_HISTORY_START` | `Russell 1000` / `2000-01-01` | Norgate provider |
+| `NTFY_TOPIC` | — (off) | ntfy topic for run summaries and alerts. Use a long random name. |
+| `NTFY_SERVER` / `NTFY_TOKEN` | `https://ntfy.sh` / — | Own ntfy server or access token (optional) |
 
 ## 16. Troubleshooting
 
@@ -392,3 +405,145 @@ git add -A && git commit -m "Describe the change" && git push
 | Short `skipped` | Not easy-to-borrow at Alpaca at order time. It is recorded and retried at the next signal. |
 | `SEC_USER_AGENT must be set` | Add a name and e-mail to `.env`, then run `npm run sectors`. |
 | Norgate error | Install the Norgate Data Updater and run `pip install norgatedata` in `backend/.venv`. |
+| VM: dashboard page is blank / 404 | No frontend build installed yet. Check that the *Frontend build* Action succeeded on GitHub, then run `bash deploy/update.sh`. |
+| VM: `https://<machine>.<tailnet>.ts.net` unreachable | Run `tailscale status` and `sudo tailscale serve status`. Enable MagicDNS and HTTPS certificates in the Tailscale admin console, then re-run `bash deploy/setup.sh`. |
+| VM: no ntfy messages | Check `NTFY_TOPIC` in `.env` and that the app is subscribed to exactly that topic. Failures are logged: `journalctl -u jmw-daily \| grep ntfy`. |
+
+## 17. Running on an Azure VM
+
+The VM runs the automated paper trading and the dashboard around the clock. Your Windows PC stays the research machine: Norgate backtests, with the Windows scripts unchanged.
+
+| | Azure VM (Ubuntu 24.04, 1 GiB RAM + 2 GB swap) | Windows PC |
+|---|---|---|
+| Provider | Alpaca (SIP) | Norgate (backtests), or Alpaca |
+| Runs | `jmw-backend` (API + dashboard), `jmw-daily.timer`, `jmw-backup.timer` | `npm run dev` / `npm start`, research |
+| Dashboard | `https://<machine>.<tailnet>.ts.net` (Tailscale, HTTPS, private) | `http://127.0.0.1:8765` |
+| Frontend | pre-built by GitHub Actions, downloaded | built locally |
+
+> **Run the scheduler in one place only.** The VM and the PC must never both run the daily cycle against the same Alpaca paper account. Each has its own database, so neither knows about the other's planned orders. Remove the Windows tasks (`npm run schedule:remove`) before the VM takes over.
+
+**Memory.** On the real data (600 symbols, ~1.5 M bars), loading the price panel peaks at about 230 MB, and the daily cycle takes about 15 s. The backend unit has `MemoryHigh=500M` / `MemoryMax=750M` and one worker. Long backtests in the Research Lab also work on the VM but are slow; run heavy research on the PC.
+
+### 1. Clone and install Tailscale
+
+```bash
+ssh azureuser@<vm-public-ip>
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/janwernli/JMW-Systematic.git ~/JMW-Systematic
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up          # log in with the link it prints
+```
+
+In the Tailscale admin console, enable **MagicDNS** and **HTTPS certificates** (DNS page) so `tailscale serve` can use `https://<machine>.<tailnet>.ts.net`.
+
+### 2. Create `.env`
+
+```bash
+cd ~/JMW-Systematic
+bash deploy/setup.sh       # first run: copies .env.example to .env (chmod 600) and stops
+nano .env
+```
+
+Fill in the following (every variable is commented in `.env.example`):
+
+- `ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY`: your **paper** keys.
+- `ALPACA_DATA_FEED=sip`.
+- `SEC_USER_AGENT`: name and e-mail.
+- `NTFY_TOPIC`: a long random name, e.g. `jmw-$(openssl rand -hex 12)`. Subscribe to it in the ntfy app.
+- Leave `BROKER_TRADING_ENABLED=false` for now.
+
+### 3. Bring the database along (recommended)
+
+The model ledger, the order history with its client order ids and your plan decisions live in `data/momentum.db`. Copying it keeps the VM's view of the Alpaca account continuous and avoids a 10-year first import on a small VM.
+
+On the PC:
+
+```powershell
+npm run schedule:remove                 # the VM takes over the scheduling
+npm run backup                          # consistent copy in %USERPROFILE%\backups\momentum-YYYY-MM-DD.db
+scp $HOME\backups\momentum-2026-09-30.db azureuser@<vm>:~/JMW-Systematic/data/momentum.db
+```
+
+Without a copied database, the first run imports the full Alpaca history (slow, but it works), or you can run `cd backend && .venv/bin/python -m app import-data` yourself.
+
+### 4. Run setup
+
+```bash
+bash deploy/setup.sh
+```
+
+The script is idempotent; re-run it at any time. It does the following:
+
+1. Installs Python 3.12 + venv, sqlite3, ufw and unattended-upgrades, and creates 2 GB of swap if there is none.
+2. Creates `backend/.venv` and installs `backend/requirements.txt`. It reinstalls only when the file changes.
+3. Downloads the latest frontend build (release `frontend-latest`) after verifying its SHA-256.
+4. Applies database migrations (`python -m app migrate`).
+5. Installs and enables the systemd units:
+
+   | Unit | What |
+   |---|---|
+   | `jmw-backend.service` | `uvicorn` on **127.0.0.1:8765 only**, 1 worker, `Restart=always`, memory-capped |
+   | `jmw-daily.timer` | `python -m app daily --trigger schedule` at **08:00 and 17:30 America/New_York**, Mon–Fri, `Persistent=true` (a run missed while the VM was off is made up at boot) |
+   | `jmw-backup.timer` | nightly 21:00 New York: SQLite online backup to `~/backups/momentum-YYYY-MM-DD.db`, keeps the last 14 |
+
+6. Turns on unattended security upgrades. If a reboot is needed, it happens at 04:00 UTC, when no run is scheduled; everything restarts by itself.
+7. Configures the ufw firewall: deny incoming except **OpenSSH** and the **tailscale0** interface.
+8. Runs `tailscale serve --bg 8765` if Tailscale is installed and logged in. This serves the dashboard at `https://<machine>.<tailnet>.ts.net`, and the configuration persists across reboots.
+9. Sets `chmod 600 .env`.
+
+### 5. Check, then switch trading on
+
+```bash
+systemctl list-timers 'jmw-*'           # next runs (shown in UTC and as "left")
+sudo systemctl start jmw-daily          # one run now; BROKER_TRADING_ENABLED=false -> nothing is sent
+journalctl -u jmw-daily -n 100          # its output; an ntfy summary should arrive too
+```
+
+When the run looks right, set `BROKER_TRADING_ENABLED=true` in `.env` and run `sudo systemctl restart jmw-backend`. The daily cycle reads `.env` at every run; the backend reads it only at startup, so the restart makes the dashboard show the new value.
+
+With the default **Approve** mode, month-end rebalances wait for you on the Trading page (ntfy tells you). Stop-loss covers are always sent automatically.
+
+### Logs
+
+```bash
+journalctl -u jmw-backend -f            # API / dashboard
+journalctl -u jmw-daily -n 200          # daily cycles (also on the Trading page, "Automation runs")
+journalctl -u jmw-backup                # backups
+```
+
+### ntfy notifications
+
+With `NTFY_TOPIC` set, every daily run sends a short summary:
+
+- orders sent / planned / skipped / awaiting approval;
+- account equity and the number of long and short positions;
+- how far the data reaches.
+
+It sends a **high-priority alert** on any error, on **stale data**, when a plan is waiting for your approval, and when a backup fails. With an empty `NTFY_TOPIC`, nothing is sent.
+
+### Update
+
+```bash
+cd ~/JMW-Systematic && bash deploy/update.sh
+```
+
+The script does the following:
+
+1. `git pull --ff-only`. If the deploy scripts themselves changed, it continues with the new version.
+2. Reinstalls the requirements only if `requirements.txt` changed.
+3. Downloads the new frontend build. It warns if the GitHub Action hasn't finished yet; just re-run it a few minutes later.
+4. Waits for a running daily cycle to finish, then stops the backend and applies DB migrations.
+5. Refreshes the systemd units, restarts the backend and checks `/api/health`.
+
+### Restore a backup
+
+```bash
+sudo systemctl stop jmw-daily.timer jmw-backend
+cd ~/JMW-Systematic
+mkdir -p data/replaced && mv data/momentum.db* data/replaced/  # keep the current file (+ its -wal/-shm) aside
+cp ~/backups/momentum-2026-10-14.db data/momentum.db
+(cd backend && .venv/bin/python -m app migrate)                # an older backup may predate a migration
+sudo systemctl start jmw-backend jmw-daily.timer
+```
+
+Orders placed after the backup date are not in the restored database. The Alpaca account stays the source of truth: the next run syncs positions and order statuses from Alpaca, and deterministic client order ids stop an order from being sent twice. If a restored month-end plan was already approved in the lost period, approve it again.

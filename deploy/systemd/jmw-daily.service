@@ -1,0 +1,22 @@
+# Installed by deploy/setup.sh. Triggered by jmw-daily.timer; safe to start by hand:
+#   sudo systemctl start jmw-daily.service && journalctl -u jmw-daily -f
+[Unit]
+Description=JMW daily cycle (data refresh, Alpaca paper sync, model ledger, stop-losses, rebalance)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@USER@
+WorkingDirectory=@REPO@/backend
+Environment=PYTHONUNBUFFERED=1
+Environment=MALLOC_ARENA_MAX=2
+ExecStart=@REPO@/backend/.venv/bin/python -m app daily --trigger schedule
+TimeoutStartSec=45min
+Nice=5
+MemoryHigh=500M
+MemoryMax=750M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

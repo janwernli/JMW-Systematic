@@ -1,0 +1,11 @@
+# Nightly, after the 17:30 ET run has finished.
+[Unit]
+Description=JMW nightly SQLite backup (21:00 New York time)
+
+[Timer]
+OnCalendar=*-*-* 21:00:00 America/New_York
+Persistent=true
+Unit=jmw-backup.service
+
+[Install]
+WantedBy=timers.target

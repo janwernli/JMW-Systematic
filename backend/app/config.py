@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     broker_trading_enabled: bool = Field(default=False, alias="BROKER_TRADING_ENABLED")
     broker_paper_url: str = Field(default="https://paper-api.alpaca.markets", alias="ALPACA_PAPER_TRADING_URL")
 
+    # Push notifications (ntfy). Empty topic = notifications off.
+    ntfy_topic: str = Field(default="", alias="NTFY_TOPIC")
+    ntfy_server: str = Field(default="https://ntfy.sh", alias="NTFY_SERVER")
+    ntfy_token: SecretStr | None = Field(default=None, alias="NTFY_TOKEN")
+
     @field_validator("database_path", "alpaca_universe_file", mode="after")
     @classmethod
     def _resolve_from_repo_root(cls, v: Path | None) -> Path | None:

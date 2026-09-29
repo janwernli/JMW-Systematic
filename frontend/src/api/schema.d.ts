@@ -596,7 +596,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/automation/approval": {
+    "/api/automation/rebalance-mode": {
         parameters: {
             query?: never;
             header?: never;
@@ -605,10 +605,11 @@ export interface paths {
         };
         get?: never;
         /**
-         * Approval Mode
-         * @description 'auto': rebalances are sent automatically. 'manual': they wait for approval (stop-losses stay automatic).
+         * Set Rebalance Mode
+         * @description 'approve' (default): month-end rebalance orders wait until the plan is approved on the Trading page.
+         *     'auto': they are sent automatically. Stop-loss covers are automatic in both modes.
          */
-        put: operations["approval_mode_api_automation_approval_put"];
+        put: operations["set_rebalance_mode_api_automation_rebalance_mode_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -616,7 +617,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/broker/approve": {
+    "/api/broker/plans/{plan_id}/approve": {
         parameters: {
             query?: never;
             header?: never;
@@ -626,17 +627,17 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Approve
-         * @description Approve all orders awaiting approval (optionally for one plan), then run a cycle to send them.
+         * Approve Plan
+         * @description Approve the whole month-end plan, then run a cycle to send its orders.
          */
-        post: operations["approve_api_broker_approve_post"];
+        post: operations["approve_plan_api_broker_plans__plan_id__approve_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/broker/decline": {
+    "/api/broker/plans/{plan_id}/decline": {
         parameters: {
             query?: never;
             header?: never;
@@ -646,10 +647,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Decline
-         * @description Decline all orders awaiting approval (optionally for one plan). Declined orders are not regenerated.
+         * Decline Plan
+         * @description Decline the whole plan: its orders are never sent or regenerated (stop-losses stay automatic).
          */
-        post: operations["decline_api_broker_decline_post"];
+        post: operations["decline_plan_api_broker_plans__plan_id__decline_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -712,11 +713,6 @@ export interface components {
             /** Pending Plan Id */
             pending_plan_id: number | null;
         };
-        /** ApprovalModeRequest */
-        ApprovalModeRequest: {
-            /** Mode */
-            mode: string;
-        };
         /** AutomationRun */
         AutomationRun: {
             /** Id */
@@ -745,6 +741,21 @@ export interface components {
              * @default true
              */
             dry_run: boolean;
+        };
+        /** AwaitingPlan */
+        AwaitingPlan: {
+            /** Plan Id */
+            plan_id: number;
+            /** Signal Session */
+            signal_session: string;
+            /** Intended Session */
+            intended_session: string;
+            /** Orders */
+            orders: number;
+            /** Buy Notional */
+            buy_notional: number;
+            /** Sell Notional */
+            sell_notional: number;
         };
         /** BrokerOrder */
         BrokerOrder: {
@@ -832,10 +843,11 @@ export interface components {
             schedule_note: string;
             /** Open Orders */
             open_orders: number;
-            /** Approval Mode */
-            approval_mode: string;
+            /** Rebalance Mode */
+            rebalance_mode: string;
             /** Awaiting Approval */
             awaiting_approval: components["schemas"]["BrokerOrder"][];
+            awaiting_plan?: components["schemas"]["AwaitingPlan"] | null;
         };
         /** BrokerPosition */
         BrokerPosition: {
@@ -1053,11 +1065,6 @@ export interface components {
             warnings: components["schemas"]["QualityWarning"][];
             /** Generated At */
             generated_at: string;
-        };
-        /** DecisionRequest */
-        DecisionRequest: {
-            /** Plan Id */
-            plan_id?: number | null;
         };
         /** EquityPoint */
         EquityPoint: {
@@ -1306,6 +1313,11 @@ export interface components {
             config?: components["schemas"]["StrategyConfig"] | null;
             /** Name */
             name?: string | null;
+        };
+        /** PlanDecisionRequest */
+        PlanDecisionRequest: {
+            /** Expected Orders */
+            expected_orders?: number | null;
         };
         /** PlanDetail */
         PlanDetail: {
@@ -1607,6 +1619,14 @@ export interface components {
             level: "info" | "warning" | "error";
             /** Message */
             message: string;
+        };
+        /** RebalanceModeRequest */
+        RebalanceModeRequest: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "approve" | "auto";
         };
         /** RefreshResponse */
         RefreshResponse: {
@@ -3355,7 +3375,7 @@ export interface operations {
             };
         };
     };
-    approval_mode_api_automation_approval_put: {
+    set_rebalance_mode_api_automation_rebalance_mode_put: {
         parameters: {
             query?: never;
             header?: never;
@@ -3364,7 +3384,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ApprovalModeRequest"];
+                "application/json": components["schemas"]["RebalanceModeRequest"];
             };
         };
         responses: {
@@ -3390,16 +3410,18 @@ export interface operations {
             };
         };
     };
-    approve_api_broker_approve_post: {
+    approve_plan_api_broker_plans__plan_id__approve_post: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                plan_id: number;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DecisionRequest"];
+                "application/json": components["schemas"]["PlanDecisionRequest"];
             };
         };
         responses: {
@@ -3425,16 +3447,18 @@ export interface operations {
             };
         };
     };
-    decline_api_broker_decline_post: {
+    decline_plan_api_broker_plans__plan_id__decline_post: {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                plan_id: number;
+            };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["DecisionRequest"];
+                "application/json": components["schemas"]["PlanDecisionRequest"];
             };
         };
         responses: {

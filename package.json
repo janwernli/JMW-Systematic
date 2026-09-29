@@ -21,6 +21,8 @@
     "daily": "node scripts/py.mjs -m app daily",
     "daily:dry": "node scripts/py.mjs -m app daily --dry-run",
     "sectors": "node scripts/py.mjs -m app sectors",
+    "migrate": "node scripts/py.mjs -m app migrate",
+    "backup": "node scripts/py.mjs -m app backup",
     "schedule:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/schedule.ps1 -Install",
     "schedule:remove": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/schedule.ps1 -Remove"
   }

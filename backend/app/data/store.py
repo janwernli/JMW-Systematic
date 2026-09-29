@@ -188,13 +188,56 @@ def load_frames(db: Database, provider: str) -> tuple[pd.DataFrame, pd.DataFrame
     inst = pd.read_sql_query(
         "SELECT symbol, name, exchange, asset_type, asset_type_source, sector, sector_source, is_benchmark,"
         " list_date, delist_date, active FROM instruments WHERE provider=?", conn, params=(provider,))
-    bars = pd.read_sql_query(
-        "SELECT i.symbol, b.session, b.open, b.high, b.low, b.close, b.volume FROM bars b"
-        " JOIN instruments i ON i.id=b.instrument_id WHERE i.provider=?", conn, params=(provider,))
+    bars = _load_bars(db, provider)
     acts = pd.read_sql_query(
         "SELECT i.symbol, a.ex_date, a.action_type, a.ratio, a.amount FROM corporate_actions a"
         " JOIN instruments i ON i.id=a.instrument_id WHERE i.provider=?", conn, params=(provider,))
     return inst, bars, acts
+
+
+def _load_bars(db: Database, provider: str, chunk: int = 200_000) -> pd.DataFrame:
+    """All bars of `provider`, streamed in chunks into numpy arrays.
+
+    `read_sql_query` materializes one Python tuple (plus a str per symbol/session) per row before
+    building the frame, which peaks at ~750 MB for 1.5M bars. Streaming into preallocated arrays
+    with integer codes keeps the peak near the size of the final frame (small enough for a 1 GiB VM).
+    Symbol and session come back as categoricals; values stay float64, so results are identical.
+    """
+    ids = dict(db.conn.execute("SELECT id, symbol FROM instruments WHERE provider=?", (provider,)).fetchall())
+    n = db.conn.execute("SELECT COUNT(*) FROM bars b JOIN instruments i ON i.id=b.instrument_id WHERE i.provider=?",
+                        (provider,)).fetchone()[0]
+    inst_ids = sorted(ids)
+    inst_code = {iid: k for k, iid in enumerate(inst_ids)}
+    sess_code: dict[str, int] = {}
+    sym = np.empty(n, dtype=np.int32)
+    sess = np.empty(n, dtype=np.int32)
+    vals = np.empty((n, 5), dtype=float)
+    cur = db.conn.execute(
+        "SELECT b.instrument_id, b.session, b.open, b.high, b.low, b.close, b.volume FROM bars b"
+        " JOIN instruments i ON i.id=b.instrument_id WHERE i.provider=?", (provider,))
+    k = 0
+    while k < n:
+        rows = cur.fetchmany(chunk)
+        if not rows:
+            break
+        m = len(rows)
+        cols = list(zip(*rows))
+        sym[k:k + m] = [inst_code[i] for i in cols[0]]
+        sess[k:k + m] = [sess_code.setdefault(x, len(sess_code)) for x in cols[1]]
+        for c in range(5):
+            vals[k:k + m, c] = np.array(cols[2 + c], dtype=float)   # None -> nan
+        k += m
+        del rows, cols
+    sym, sess, vals = sym[:k], sess[:k], vals[:k]
+    frame = pd.DataFrame(vals, columns=["open", "high", "low", "close", "volume"])
+    # Ordered, sorted session categories so min()/max()/comparisons behave like the plain strings.
+    sess_cats = sorted(sess_code)
+    remap = np.empty(len(sess_code), dtype=np.int32)
+    remap[[sess_code[x] for x in sess_cats]] = np.arange(len(sess_cats), dtype=np.int32)
+    frame.insert(0, "session", pd.Categorical.from_codes(remap[sess] if len(sess) else sess, categories=sess_cats,
+                                                         ordered=True))
+    frame.insert(0, "symbol", pd.Categorical.from_codes(sym, categories=[ids[i] for i in inst_ids]))
+    return frame
 
 
 _version_cache: dict[tuple, str] = {}

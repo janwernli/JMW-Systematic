@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import threading
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from ...automation import get_setting, set_setting
+from ...automation import get_setting, plan_decision, rebalance_mode, set_setting
 from ...services import AppContext
 from ..deps import get_ctx, loads
 
@@ -61,8 +62,18 @@ class BrokerOverview(BaseModel):
     last_runs: list[AutomationRun]
     schedule_note: str
     open_orders: int
-    approval_mode: str
+    rebalance_mode: str
     awaiting_approval: list["BrokerOrder"]
+    awaiting_plan: "AwaitingPlan | None" = None
+
+
+class AwaitingPlan(BaseModel):
+    plan_id: int
+    signal_session: str
+    intended_session: str
+    orders: int
+    buy_notional: float
+    sell_notional: float
 
 
 class BrokerOrder(BaseModel):
@@ -146,6 +157,7 @@ def overview(ctx: AppContext = Depends(get_ctx)):
                "benchmark": (base_eq * bench[s] / base_b) if base_b and bench.get(s) and base_eq else None}
               for s in sessions]
     runs = [_run_row(r) for r in ctx.db.query("SELECT * FROM automation_runs ORDER BY id DESC LIMIT 10")]
+    waiting = _awaiting(ctx)
     return {
         "connected": ctx.broker is not None, "error": ctx.broker_error,
         "account": {k: acct[k] for k in ("equity", "cash", "long_market_value", "short_market_value", "buying_power",
@@ -157,16 +169,35 @@ def overview(ctx: AppContext = Depends(get_ctx)):
         "trading_enabled_env": ctx.settings.broker_trading_enabled,
         "automation_enabled": get_setting(ctx.db, "automation_enabled", "true") == "true",
         "last_runs": runs,
-        "schedule_note": ("Windows Task Scheduler runs `npm run daily` at 14:00 (orders: 08:00/09:00 ET, before the "
-                          "09:28 ET opening-auction cutoff) and 23:30 Europe/Zurich (after the US close: sync fills). "
-                          "Install with `npm run schedule:install`."),
+        "schedule_note": ("The daily cycle runs before the open (orders go into the opening auction, cutoff 09:28 ET) "
+                          "and after the close (sync fills). Azure VM: systemd timer jmw-daily at 08:00 and 17:30 "
+                          "America/New_York on weekdays. Windows: `npm run schedule:install` (14:00 and 23:30 "
+                          "Europe/Zurich). Run only one of the two against the same Alpaca account."),
         "open_orders": ctx.db.scalar("SELECT COUNT(*) FROM broker_orders WHERE status IN ('submitted','new','accepted',"
                                      "'pending_new','partially_filled','held')") or 0,
-        "approval_mode": get_setting(ctx.db, "rebalance_approval", "auto"),
-        "awaiting_approval": ctx.db.query(
-            "SELECT * FROM broker_orders WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up')"
-            " AND status_reason LIKE 'awaiting approval%' ORDER BY plan_id, side, symbol"),
+        "rebalance_mode": rebalance_mode(ctx.db),
+        "awaiting_approval": waiting,
+        "awaiting_plan": _awaiting_plan(ctx, waiting),
     }
+
+
+def _awaiting(ctx: AppContext, plan_id: int | None = None) -> list[dict]:
+    return ctx.db.query(
+        "SELECT * FROM broker_orders WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up')"
+        " AND status_reason LIKE 'awaiting approval%'" + (" AND plan_id=?" if plan_id is not None else "")
+        + " ORDER BY plan_id DESC, side, symbol", (plan_id,) if plan_id is not None else ())
+
+
+def _awaiting_plan(ctx: AppContext, waiting: list[dict]) -> dict | None:
+    if not waiting:
+        return None
+    pid = waiting[0]["plan_id"]   # newest plan first; older plans' drafts expire on their own
+    rows = [o for o in waiting if o["plan_id"] == pid]
+    plan = ctx.db.query_one("SELECT signal_session FROM rebalance_plans WHERE id=?", (pid,))
+    return {"plan_id": pid, "signal_session": plan["signal_session"] if plan else "",
+            "intended_session": rows[0]["intended_session"], "orders": len(rows),
+            "buy_notional": sum(o["qty"] * (o["ref_price"] or 0) for o in rows if o["side"] == "buy"),
+            "sell_notional": sum(o["qty"] * (o["ref_price"] or 0) for o in rows if o["side"] == "sell")}
 
 
 @router.get("/broker/orders", response_model=BrokerOrdersPage)
@@ -181,55 +212,65 @@ def runs(limit: int = Query(50, le=500), ctx: AppContext = Depends(get_ctx)):
     return [_run_row(r) for r in ctx.db.query("SELECT * FROM automation_runs ORDER BY id DESC LIMIT ?", (limit,))]
 
 
-class ApprovalModeRequest(BaseModel):
-    mode: str
+class RebalanceModeRequest(BaseModel):
+    mode: Literal["approve", "auto"]
 
 
-@router.put("/automation/approval")
-def approval_mode(req: ApprovalModeRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
-    """'auto': rebalances are sent automatically. 'manual': they wait for approval (stop-losses stay automatic)."""
-    if req.mode not in ("auto", "manual"):
-        raise HTTPException(400, "mode must be 'auto' or 'manual'")
-    set_setting(ctx.db, "rebalance_approval", req.mode)
-    return {"approval_mode": req.mode}
+@router.put("/automation/rebalance-mode")
+def set_rebalance_mode(req: RebalanceModeRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """'approve' (default): month-end rebalance orders wait until the plan is approved on the Trading page.
+    'auto': they are sent automatically. Stop-loss covers are automatic in both modes."""
+    set_setting(ctx.db, "rebalance_mode", req.mode)
+    return {"rebalance_mode": req.mode}
 
 
-class DecisionRequest(BaseModel):
-    plan_id: int | None = None
+class PlanDecisionRequest(BaseModel):
+    expected_orders: int | None = None   # the number of orders the user reviewed; guards against a changed list
 
 
-@router.post("/broker/approve")
-def approve(req: DecisionRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
-    """Approve all orders awaiting approval (optionally for one plan), then run a cycle to send them."""
+def decide_plan(ctx: AppContext, plan_id: int, decision: str, expected_orders: int | None) -> int:
+    """Record the user's decision for a whole plan and apply it to its orders awaiting approval."""
     from ...db import log_event, utcnow
 
+    prior = plan_decision(ctx.db, plan_id)
+    if prior:
+        raise HTTPException(409, f"Plan #{plan_id} was already {prior['decision']}.")
+    waiting = _awaiting(ctx, plan_id)
+    if not waiting:
+        raise HTTPException(404, f"Plan #{plan_id} has no orders awaiting approval.")
+    if expected_orders is not None and expected_orders != len(waiting):
+        raise HTTPException(409, f"The order list changed ({len(waiting)} orders now, you reviewed {expected_orders}). "
+                                 "Reload and review it again.")
+    now = utcnow()
+    where = "WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up') AND plan_id=?"
     with ctx.db.transaction() as conn:
-        n = conn.execute(
-            "UPDATE broker_orders SET approved_at=?, status_reason=REPLACE(status_reason, 'awaiting approval: ', 'approved: '),"
-            " updated_at=? WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up')"
-            + (" AND plan_id=?" if req.plan_id else ""),
-            (utcnow(), utcnow(), *([req.plan_id] if req.plan_id else []))).rowcount
-        log_event(conn, "warning", "broker", f"User approved {n} rebalance order(s)"
-                  + (f" for plan #{req.plan_id}" if req.plan_id else ""))
-    started = run_now(AutomationRunRequest(dry_run=False), ctx) if n else {"started": False}
-    return {"approved": n, "cycle_started": started.get("started", False),
-            "message": f"{n} order(s) approved" + ("; sending now if inside the 19:00-09:28 ET window, otherwise at the "
-                                                    "next scheduled run" if n else "")}
+        conn.execute("INSERT INTO broker_plan_decisions (plan_id, decision, decided_at, order_count) VALUES (?,?,?,?)",
+                     (plan_id, decision, now, len(waiting)))
+        if decision == "approved":
+            conn.execute("UPDATE broker_orders SET approved_at=?, status_reason=REPLACE(status_reason, "
+                         "'awaiting approval: ', 'approved: '), updated_at=? " + where, (now, now, plan_id))
+        else:
+            conn.execute("UPDATE broker_orders SET status='declined', status_reason='plan declined by user', "
+                         "updated_at=? " + where, (now, plan_id))
+        log_event(conn, "warning", "broker", f"User {decision} plan #{plan_id} ({len(waiting)} orders)")
+    return len(waiting)
 
 
-@router.post("/broker/decline")
-def decline(req: DecisionRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
-    """Decline all orders awaiting approval (optionally for one plan). Declined orders are not regenerated."""
-    from ...db import log_event, utcnow
+@router.post("/broker/plans/{plan_id}/approve")
+def approve_plan(plan_id: int, req: PlanDecisionRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Approve the whole month-end plan, then run a cycle to send its orders."""
+    n = decide_plan(ctx, plan_id, "approved", req.expected_orders)
+    started = run_now(AutomationRunRequest(dry_run=False), ctx)
+    return {"plan_id": plan_id, "approved": n, "cycle_started": started.get("started", False),
+            "message": f"Plan #{plan_id} approved ({n} orders): sent now if inside the 19:00-09:28 ET window or "
+                       "during the fill session, otherwise at the next scheduled run"}
 
-    with ctx.db.transaction() as conn:
-        n = conn.execute(
-            "UPDATE broker_orders SET status='declined', status_reason='declined by user', updated_at=? "
-            "WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up')"
-            + (" AND plan_id=?" if req.plan_id else ""), (utcnow(), *([req.plan_id] if req.plan_id else []))).rowcount
-        log_event(conn, "warning", "broker", f"User declined {n} rebalance order(s)"
-                  + (f" for plan #{req.plan_id}" if req.plan_id else ""))
-    return {"declined": n}
+
+@router.post("/broker/plans/{plan_id}/decline")
+def decline_plan(plan_id: int, req: PlanDecisionRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Decline the whole plan: its orders are never sent or regenerated (stop-losses stay automatic)."""
+    n = decide_plan(ctx, plan_id, "declined", req.expected_orders)
+    return {"plan_id": plan_id, "declined": n}
 
 
 class ToggleRequest(BaseModel):

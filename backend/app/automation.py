@@ -11,8 +11,9 @@ any number of times per day.
                and the signal close) for up to 5 sessions after the signal; flips are split into
                close-now / open-next-run; new shorts require Alpaca's easy-to-borrow flag
   6. SUBMIT    only if BROKER_TRADING_ENABLED=true AND automation is switched on AND data is fresh.
-               Approval mode "manual": rebalance/catch-up orders wait as planned ("awaiting approval") until
-               approved on the Trading page; stop-loss covers are always automatic.
+               rebalance_mode "approve" (default): rebalance/catch-up orders wait as planned ("awaiting
+               approval") until the whole plan is approved on the Trading page; "auto": sent automatically.
+               Stop-loss covers are always automatic.
                Inside 19:00-09:28 ET: market-on-open ("opg"); during the fill session's regular
                hours: market "day" order (late, flagged); otherwise orders stay planned for the next run.
 
@@ -32,6 +33,7 @@ import numpy as np
 
 from .broker.alpaca_paper import AlpacaPaperBroker, BrokerError
 from .db import log_event, utcnow
+from .notify import notify_daily
 from .strategy.config import StrategyConfig
 
 log = logging.getLogger(__name__)
@@ -41,6 +43,8 @@ TERMINAL_FAILED = {"canceled", "expired", "rejected", "done_for_day", "stopped",
 PENDING = {"submitted", "new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding",
            "pending_replace", "replaced", "calculated"}
 RECONCILE_SESSIONS = 5
+UNSENT = ("planned", "skipped", "expired_unsent", "superseded")   # drafts that may be re-planned in place
+REBALANCE_MODES = ("approve", "auto")
 
 
 @dataclass
@@ -61,6 +65,17 @@ def set_setting(db, key: str, value: str) -> None:
         conn.execute("INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET "
                      "value=excluded.value, updated_at=excluded.updated_at", (key, value, utcnow()))
         log_event(conn, "warning", "automation", f"Setting {key} changed to {value}")
+
+
+def rebalance_mode(db) -> str:
+    mode = get_setting(db, "rebalance_mode", "approve")
+    return mode if mode in REBALANCE_MODES else "approve"
+
+
+def plan_decision(db, plan_id: int | None) -> dict | None:
+    if plan_id is None:
+        return None
+    return db.query_one("SELECT * FROM broker_plan_decisions WHERE plan_id=?", (plan_id,))
 
 
 def submission_mode(now: datetime, fill_session: str, clock_is_open: bool | None) -> tuple[str | None, str]:
@@ -103,7 +118,9 @@ class DailyCycle:
                          (utcnow(), worst, summary, json.dumps([s.__dict__ for s in steps], default=str), run_id))
             log_event(conn, "error" if worst == "error" else "warning" if worst == "warning" else "info", "automation",
                       f"Daily cycle #{run_id} ({trigger}{', dry run' if dry_run else ''}): {worst}", payload={"summary": summary})
-        return {"run_id": run_id, "status": worst, "steps": [s.__dict__ for s in steps]}
+        result = {"run_id": run_id, "status": worst, "steps": [s.__dict__ for s in steps]}
+        notify_daily(self.ctx.settings, result, trigger, dry_run)
+        return result
 
     # ------------------------------------------------------------------ steps
     def _run(self, steps: list[Step], dry_run: bool) -> None:
@@ -139,6 +156,9 @@ class DailyCycle:
                 account, positions, clock_open = self._sync(now)
                 st.detail = (f"equity ${float(account.get('equity', 0)):,.2f}, {len(positions)} positions, "
                              f"market {'open' if clock_open else 'closed'}")
+                st.data = {"equity": float(account.get("equity", 0)),
+                           "longs": sum(1 for p in positions.values() if p["qty"] > 0),
+                           "shorts": sum(1 for p in positions.values() if p["qty"] < 0)}
             except BrokerError as e:
                 st.status, st.detail = "error", str(e)
         steps.append(st)
@@ -256,6 +276,9 @@ class DailyCycle:
 
     def _reconcile(self, plan: dict, positions: dict, equity: float, closes: dict, latest: str, next_s: str,
                    skip: set[str]) -> list[dict]:
+        dec = plan_decision(self.db, plan["id"])
+        if dec and dec["decision"] == "declined":
+            return []  # the user declined this plan: no orders, no catch-ups
         rows = self.db.query("SELECT symbol, target_weight FROM signal_rows WHERE set_id=? AND selected=1",
                              (plan["signal_set_id"],))
         targets = {r["symbol"]: r["target_weight"] for r in rows}
@@ -271,7 +294,7 @@ class DailyCycle:
                 continue  # the user declined this plan's order for the symbol: no retries for this plan
             if any(s in PENDING for s in st):
                 continue  # an order for this plan is still working at the broker
-            st = [s for s in st if s not in ("planned", "expired_unsent")]  # unsent drafts are re-planned in place
+            st = [s for s in st if s not in ("planned", "expired_unsent", "superseded")]  # unsent drafts: re-planned in place
             w = targets.get(sym, 0.0)
             cur = positions.get(sym, {}).get("qty", 0)
             ref = closes.get(sym)
@@ -301,10 +324,17 @@ class DailyCycle:
     def _submit(self, orders: list[dict], now: datetime, next_s: str, clock_open: bool | None, dry_run: bool) -> Step:
         st = Step("orders")
         enabled = self.ctx.settings.broker_trading_enabled and get_setting(self.db, "automation_enabled", "true") == "true"
-        manual = get_setting(self.db, "rebalance_approval", "auto") == "manual"
+        approve_mode = rebalance_mode(self.db) == "approve"
         awaiting = 0
         tif, how = submission_mode(now, next_s, clock_open)
         sent = skipped = planned = 0
+        # Drafts for this session that the latest computation no longer produces (e.g. the symbol is now being
+        # stopped out, or the position already matches) must not linger as planned / awaiting approval.
+        current = [o["cid"] for o in orders]
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE broker_orders SET status='superseded', status_reason='no longer needed by the latest run',"
+                         " updated_at=? WHERE status='planned' AND intended_session=? AND client_order_id NOT IN (%s)"
+                         % ",".join("?" * len(current)), (utcnow(), next_s, *current))
         for o in orders:
             status, reason = "planned", o["why"]
             if o["effect"] == "open_short":
@@ -315,22 +345,27 @@ class DailyCycle:
                 except BrokerError as e:
                     status, reason = "skipped", f"asset check failed: {e}"
             row = self.db.query_one("SELECT status, approved_at FROM broker_orders WHERE client_order_id=?", (o["cid"],))
-            if row and row["status"] not in ("planned", "skipped", "expired_unsent"):
+            if row and row["status"] not in UNSENT:
                 continue
-            needs_approval = manual and o["origin"] in ("rebalance", "catch_up") and not (row and row["approved_at"])
+            dec = plan_decision(self.db, o["plan_id"])
+            approved_at = dec["decided_at"] if dec and dec["decision"] == "approved" else None
+            needs_approval = (approve_mode and o["origin"] in ("rebalance", "catch_up")
+                              and not approved_at and not (row and row["approved_at"]))
             if needs_approval and status == "planned":
                 reason = "awaiting approval: " + reason
             with self.db.transaction() as conn:
                 conn.execute(
                     "INSERT INTO broker_orders (client_order_id, origin, plan_id, symbol, side, position_effect, qty,"
-                    " order_type, time_in_force, intended_session, ref_price, status, status_reason, created_at, updated_at)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(client_order_id) DO UPDATE SET"
+                    " order_type, time_in_force, intended_session, ref_price, status, status_reason, approved_at,"
+                    " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(client_order_id)"
+                    " DO UPDATE SET approved_at=COALESCE(broker_orders.approved_at, excluded.approved_at),"
                     " side=excluded.side, position_effect=excluded.position_effect, qty=excluded.qty,"
                     " time_in_force=excluded.time_in_force, intended_session=excluded.intended_session,"
                     " ref_price=excluded.ref_price, status=excluded.status, status_reason=excluded.status_reason,"
-                    " updated_at=excluded.updated_at WHERE broker_orders.status IN ('planned', 'skipped', 'expired_unsent')",
+                    " updated_at=excluded.updated_at WHERE broker_orders.status IN ('planned', 'skipped', 'expired_unsent',"
+                    " 'superseded')",
                     (o["cid"], o["origin"], o["plan_id"], o["symbol"], o["side"], o["effect"], o["qty"], "market",
-                     tif or "opg", next_s, o["ref"], status, reason, utcnow(), utcnow()))
+                     tif or "opg", next_s, o["ref"], status, reason, approved_at, utcnow(), utcnow()))
             if status == "skipped":
                 skipped += 1
                 continue
@@ -360,5 +395,6 @@ class DailyCycle:
                      + (f", {awaiting} awaiting your approval" if awaiting else "") + f" ({why})")
         if tif == "day" and sent:
             st.status = "warning"
-        st.data = {"tif": tif, "enabled": enabled, "orders": orders}
+        st.data = {"tif": tif, "enabled": enabled, "orders": orders, "sent": sent, "planned": planned,
+                   "skipped": skipped, "awaiting": awaiting, "mode": "approve" if approve_mode else "auto"}
         return st

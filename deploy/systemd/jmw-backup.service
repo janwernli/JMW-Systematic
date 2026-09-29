@@ -1,0 +1,16 @@
+# Installed by deploy/setup.sh. Consistent SQLite backup (online backup API) to ~/backups, keeps 14.
+[Unit]
+Description=JMW nightly SQLite backup
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@USER@
+WorkingDirectory=@REPO@/backend
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@REPO@/backend/.venv/bin/python -m app backup --dir @HOME@/backups --keep 14
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full

@@ -1,0 +1,15 @@
+# 08:00 ET: orders for the opening auction (cutoff 09:28 ET).  17:30 ET: after the close - sync fills,
+# new bars, month-end signal. Weekdays only; exchange holidays are handled by the cycle itself (idempotent).
+# Persistent=true: a run missed while the VM was off is made up at the next boot.
+[Unit]
+Description=JMW daily cycle at 08:00 and 17:30 New York time (weekdays)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 08:00:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 17:30:00 America/New_York
+Persistent=true
+AccuracySec=30s
+Unit=jmw-daily.service
+
+[Install]
+WantedBy=timers.target

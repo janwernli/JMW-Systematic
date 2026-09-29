@@ -1406,19 +1406,19 @@
         }
       }
     },
-    "/api/automation/approval": {
+    "/api/automation/rebalance-mode": {
       "put": {
         "tags": [
           "broker"
         ],
-        "summary": "Approval Mode",
-        "description": "'auto': rebalances are sent automatically. 'manual': they wait for approval (stop-losses stay automatic).",
-        "operationId": "approval_mode_api_automation_approval_put",
+        "summary": "Set Rebalance Mode",
+        "description": "'approve' (default): month-end rebalance orders wait until the plan is approved on the Trading page.\n'auto': they are sent automatically. Stop-loss covers are automatic in both modes.",
+        "operationId": "set_rebalance_mode_api_automation_rebalance_mode_put",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ApprovalModeRequest"
+                "$ref": "#/components/schemas/RebalanceModeRequest"
               }
             }
           },
@@ -1432,7 +1432,7 @@
                 "schema": {
                   "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Approval Mode Api Automation Approval Put"
+                  "title": "Response Set Rebalance Mode Api Automation Rebalance Mode Put"
                 }
               }
             }
@@ -1450,23 +1450,34 @@
         }
       }
     },
-    "/api/broker/approve": {
+    "/api/broker/plans/{plan_id}/approve": {
       "post": {
         "tags": [
           "broker"
         ],
-        "summary": "Approve",
-        "description": "Approve all orders awaiting approval (optionally for one plan), then run a cycle to send them.",
-        "operationId": "approve_api_broker_approve_post",
+        "summary": "Approve Plan",
+        "description": "Approve the whole month-end plan, then run a cycle to send its orders.",
+        "operationId": "approve_plan_api_broker_plans__plan_id__approve_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Plan Id"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DecisionRequest"
+                "$ref": "#/components/schemas/PlanDecisionRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -1474,9 +1485,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Approve Api Broker Approve Post"
+                  "additionalProperties": true,
+                  "title": "Response Approve Plan Api Broker Plans  Plan Id  Approve Post"
                 }
               }
             }
@@ -1494,23 +1505,34 @@
         }
       }
     },
-    "/api/broker/decline": {
+    "/api/broker/plans/{plan_id}/decline": {
       "post": {
         "tags": [
           "broker"
         ],
-        "summary": "Decline",
-        "description": "Decline all orders awaiting approval (optionally for one plan). Declined orders are not regenerated.",
-        "operationId": "decline_api_broker_decline_post",
+        "summary": "Decline Plan",
+        "description": "Decline the whole plan: its orders are never sent or regenerated (stop-losses stay automatic).",
+        "operationId": "decline_plan_api_broker_plans__plan_id__decline_post",
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Plan Id"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DecisionRequest"
+                "$ref": "#/components/schemas/PlanDecisionRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -1518,9 +1540,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
                   "type": "object",
-                  "title": "Response Decline Api Broker Decline Post"
+                  "additionalProperties": true,
+                  "title": "Response Decline Plan Api Broker Plans  Plan Id  Decline Post"
                 }
               }
             }
@@ -1676,19 +1698,6 @@
         ],
         "title": "AdvanceResponse"
       },
-      "ApprovalModeRequest": {
-        "properties": {
-          "mode": {
-            "type": "string",
-            "title": "Mode"
-          }
-        },
-        "type": "object",
-        "required": [
-          "mode"
-        ],
-        "title": "ApprovalModeRequest"
-      },
       "AutomationRun": {
         "properties": {
           "id": {
@@ -1765,6 +1774,44 @@
         },
         "type": "object",
         "title": "AutomationRunRequest"
+      },
+      "AwaitingPlan": {
+        "properties": {
+          "plan_id": {
+            "type": "integer",
+            "title": "Plan Id"
+          },
+          "signal_session": {
+            "type": "string",
+            "title": "Signal Session"
+          },
+          "intended_session": {
+            "type": "string",
+            "title": "Intended Session"
+          },
+          "orders": {
+            "type": "integer",
+            "title": "Orders"
+          },
+          "buy_notional": {
+            "type": "number",
+            "title": "Buy Notional"
+          },
+          "sell_notional": {
+            "type": "number",
+            "title": "Sell Notional"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan_id",
+          "signal_session",
+          "intended_session",
+          "orders",
+          "buy_notional",
+          "sell_notional"
+        ],
+        "title": "AwaitingPlan"
       },
       "BrokerOrder": {
         "properties": {
@@ -2057,9 +2104,9 @@
             "type": "integer",
             "title": "Open Orders"
           },
-          "approval_mode": {
+          "rebalance_mode": {
             "type": "string",
-            "title": "Approval Mode"
+            "title": "Rebalance Mode"
           },
           "awaiting_approval": {
             "items": {
@@ -2067,6 +2114,16 @@
             },
             "type": "array",
             "title": "Awaiting Approval"
+          },
+          "awaiting_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AwaitingPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -2084,7 +2141,7 @@
           "last_runs",
           "schedule_note",
           "open_orders",
-          "approval_mode",
+          "rebalance_mode",
           "awaiting_approval"
         ],
         "title": "BrokerOverview"
@@ -3052,23 +3109,6 @@
         ],
         "title": "DataQuality"
       },
-      "DecisionRequest": {
-        "properties": {
-          "plan_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Plan Id"
-          }
-        },
-        "type": "object",
-        "title": "DecisionRequest"
-      },
       "EquityPoint": {
         "properties": {
           "session": {
@@ -3872,6 +3912,23 @@
         },
         "type": "object",
         "title": "PaperInitRequest"
+      },
+      "PlanDecisionRequest": {
+        "properties": {
+          "expected_orders": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Orders"
+          }
+        },
+        "type": "object",
+        "title": "PlanDecisionRequest"
       },
       "PlanDetail": {
         "properties": {
@@ -4881,6 +4938,23 @@
           "message"
         ],
         "title": "QualityWarning"
+      },
+      "RebalanceModeRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "auto"
+            ],
+            "title": "Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "RebalanceModeRequest"
       },
       "RefreshResponse": {
         "properties": {

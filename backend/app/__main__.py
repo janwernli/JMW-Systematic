@@ -4,6 +4,9 @@
     python -m app export-openapi F   write the OpenAPI schema (used to generate frontend types)
     python -m app import-data        import/refresh market data from the configured provider
     python -m app advance [--until YYYY-MM-DD]   advance the virtual portfolio
+    python -m app daily [--dry-run] [--trigger T] run the automated daily cycle (Alpaca paper)
+    python -m app migrate            apply pending database migrations and exit
+    python -m app backup [--dir D] [--keep N]   consistent SQLite backup (default ~/backups, keep 14)
 """
 
 from __future__ import annotations
@@ -28,6 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     daily.add_argument("--dry-run", action="store_true", help="compute orders but never send them")
     daily.add_argument("--trigger", default="cli")
     sub.add_parser("sectors", help="(re)classify sectors from SEC EDGAR SIC codes")
+    sub.add_parser("migrate", help="apply pending database migrations and exit")
+    bak = sub.add_parser("backup", help="consistent SQLite backup (online backup API) with rotation")
+    bak.add_argument("--dir", type=Path, default=Path.home() / "backups")
+    bak.add_argument("--keep", type=int, default=14)
     args = parser.parse_args(argv)
 
     from .config import get_settings
@@ -39,18 +46,48 @@ def main(argv: list[str] | None = None) -> int:
         export_openapi(args.path)
         print(f"wrote {args.path}")
         return 0
+    if args.cmd == "migrate":
+        from .db import Database
+
+        before = _applied(settings.database_path)
+        Database(settings.database_path).close()
+        after = _applied(settings.database_path)
+        new = sorted(after - before)
+        print(f"{settings.database_path}: " + (f"applied {', '.join(new)}" if new else "schema up to date")
+              + f" ({len(after)} migrations)")
+        return 0
+    if args.cmd == "backup":
+        from .backup import backup_database
+        from .notify import alert
+
+        try:
+            res = backup_database(settings.database_path, args.dir, keep=args.keep)
+        except Exception as e:  # noqa: BLE001
+            alert(settings, "backup", f"{type(e).__name__}: {e}")
+            print(f"backup failed: {e}", file=sys.stderr)
+            return 1
+        print(f"backup {res['backup']} ({res['bytes'] / 1e6:.1f} MB); keeping {len(res['kept'])}"
+              + (f"; removed {', '.join(res['removed'])}" if res["removed"] else ""))
+        return 0
     if args.cmd in ("import-data", "advance", "daily", "sectors"):
         from .logging_setup import configure_logging
         from .services import AppContext
 
         configure_logging(settings.log_level, "text")
-        ctx = AppContext(settings)
         if args.cmd == "daily":
-            res = ctx.daily_cycle(trigger=args.trigger, dry_run=args.dry_run)
+            from .notify import alert
+
+            try:
+                ctx = AppContext(settings)
+                res = ctx.daily_cycle(trigger=args.trigger, dry_run=args.dry_run)
+            except Exception as e:  # noqa: BLE001 - the cycle itself records and notifies its own errors
+                alert(settings, "daily cycle", f"could not run: {type(e).__name__}: {e}")
+                raise
             print(f"daily cycle #{res['run_id']}: {res['status']}")
             for st in res["steps"]:
                 print(f"  [{st['status']:>7}] {st['name']}: {st['detail']}")
             return 0 if res["status"] != "error" else 1
+        ctx = AppContext(settings)
         if args.cmd == "sectors":
             print(ctx.fill_sectors(only_missing=False) or "SEC_USER_AGENT not configured")
             return 0
@@ -79,6 +116,20 @@ def main(argv: list[str] | None = None) -> int:
     uvicorn.run("app.api.main:create_app", factory=True, host=settings.host, port=settings.port,
                 reload=getattr(args, "reload", False), log_config=None)
     return 0
+
+
+def _applied(db_path: Path) -> set[str]:
+    import sqlite3
+
+    if not Path(db_path).exists():
+        return set()
+    con = sqlite3.connect(db_path)
+    try:
+        return {r[0] for r in con.execute("SELECT name FROM schema_migrations")}
+    except sqlite3.OperationalError:
+        return set()
+    finally:
+        con.close()
 
 
 if __name__ == "__main__":

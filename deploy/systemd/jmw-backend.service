@@ -1,0 +1,27 @@
+# Installed by deploy/setup.sh (@REPO@ and @USER@ are filled in). Do not edit the copy in /etc.
+[Unit]
+Description=JMW Capital Partners Trading - API + dashboard (127.0.0.1:8765 only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@REPO@/backend
+Environment=PYTHONUNBUFFERED=1
+# Fewer glibc malloc arenas: much lower resident memory for numpy/pandas on a 1 GiB VM.
+Environment=MALLOC_ARENA_MAX=2
+# Localhost only, never 0.0.0.0: the dashboard is reached through `tailscale serve` (HTTPS on your tailnet).
+ExecStart=@REPO@/backend/.venv/bin/python -m uvicorn app.api.main:create_app --factory --host 127.0.0.1 --port 8765 --workers 1 --no-server-header --timeout-graceful-shutdown 20
+Restart=always
+RestartSec=5
+# Soft limit first (reclaim / swap), hard limit well below RAM + swap.
+MemoryHigh=500M
+MemoryMax=750M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

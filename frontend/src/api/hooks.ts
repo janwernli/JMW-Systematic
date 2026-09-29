@@ -186,7 +186,9 @@ export type AlphaFit = {
   betas: Record<string, number>; t_betas: Record<string, number>; r2: number | null; nw_lags: number;
 };
 export type AlphaResult = { model: string; source: string; full: AlphaFit | null; first_half: AlphaFit | null;
-  second_half: AlphaFit | null; notes: string[] };
+  second_half: AlphaFit | null; notes: string[]; excess_returns: boolean };
+
+export type PlanDecision = { plan_id: number; expected_orders: number };
 
 export function useAutomationMutations() {
   const qc = useQueryClient();
@@ -196,13 +198,14 @@ export function useAutomationMutations() {
       onError,
       onSuccess: () => qc.invalidateQueries({ queryKey: ["broker"] }),
     }),
-    approvalMode: useMutation({
-      mutationFn: (mode: "auto" | "manual") => api.put<{ approval_mode: string }>("/automation/approval", { mode }),
+    rebalanceMode: useMutation({
+      mutationFn: (mode: "approve" | "auto") => api.put<{ rebalance_mode: string }>("/automation/rebalance-mode", { mode }),
       onError,
       onSuccess: () => qc.invalidateQueries({ queryKey: ["broker"] }),
     }),
     approve: useMutation({
-      mutationFn: (plan_id: number | null) => api.post<{ approved: number; message: string }>("/broker/approve", { plan_id }),
+      mutationFn: (d: PlanDecision) =>
+        api.post<{ approved: number; message: string }>(`/broker/plans/${d.plan_id}/approve`, { expected_orders: d.expected_orders }),
       onError,
       onSuccess: (r: { message: string }) => {
         notifications.show({ color: "teal", title: "Rebalance approved", message: r.message });
@@ -210,7 +213,8 @@ export function useAutomationMutations() {
       },
     }),
     decline: useMutation({
-      mutationFn: (plan_id: number | null) => api.post<{ declined: number }>("/broker/decline", { plan_id }),
+      mutationFn: (d: PlanDecision) =>
+        api.post<{ declined: number }>(`/broker/plans/${d.plan_id}/decline`, { expected_orders: d.expected_orders }),
       onError,
       onSuccess: (r: { declined: number }) => {
         notifications.show({ color: "yellow", title: "Rebalance declined", message: `${r.declined} order(s) declined` });
