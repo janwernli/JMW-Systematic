@@ -45,10 +45,22 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
         if version in applied:
             continue
         sql = file.read_text(encoding="utf-8")
-        # executescript commits implicitly; wrap in an explicit transaction for atomicity.
-        conn.executescript(
-            "BEGIN;\n" + sql + f"\nINSERT INTO schema_migrations VALUES ({version}, '{file.stem}', '{utcnow()}');\nCOMMIT;"
-        )
+        # Table rebuilds require foreign keys off (SQLite ALTER TABLE procedure); the pragma cannot change
+        # inside a transaction, so toggle it around the atomic migration and verify integrity afterwards.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            conn.executescript(
+                "BEGIN;\n" + sql + f"\nINSERT INTO schema_migrations VALUES ({version}, '{file.stem}', '{utcnow()}');\nCOMMIT;"
+            )
+        except Exception:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+        problems = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if problems:
+            raise RuntimeError(f"foreign key check failed after migration {file.stem}: {problems[:5]}")
         log.info("applied migration", extra={"migration": file.stem})
         done.append(file.stem)
     return done

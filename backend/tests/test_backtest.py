@@ -9,7 +9,7 @@ from app.strategy.config import StrategyConfig
 
 from .helpers import make_panel, weekday_calendar
 
-SMALL = dict(lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3, min_adv_usd=0,
+SMALL = dict(mode="long_only", lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3, min_adv_usd=0,
              min_price=1, slippage_bps=0, top_n=1, initial_capital=10_000)
 
 

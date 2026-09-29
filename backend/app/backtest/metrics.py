@@ -9,7 +9,9 @@
   one-way turnover      (buys + sells) / 2 / NAV at the rebalance open
   return difference     strategy total return - benchmark total return (a simple difference,
                         NOT a statistically estimated alpha)
-  gross NAV             net NAV + cumulative transaction costs (slippage + commissions), not compounded
+  gross NAV             net NAV + cumulative transaction costs (slippage + commissions + borrow fees), not compounded
+  gross exposure        (long market value + |short market value|) / NAV ; net exposure = (long - |short|) / NAV
+  realized beta         cov(r_strategy, r_benchmark) / var(r_benchmark) over the run's daily returns
 """
 
 from __future__ import annotations
@@ -79,6 +81,19 @@ def compute_metrics(nav_df: pd.DataFrame, rebalances: list[dict], initial_capita
         "avg_positions": float(nav_df["positions"].mean()),
         "avg_cash_weight": float((nav_df["cash"] / nav_df["nav"]).mean()),
     }
+    if "long_value" in nav_df.columns and nav_df["long_value"].notna().any():
+        lv = nav_df["long_value"].astype(float) / nav_df["nav"]
+        sv = -nav_df["short_value"].astype(float) / nav_df["nav"]
+        out.update(avg_long_gross=float(lv.mean()), avg_short_gross=float(sv.mean()),
+                   avg_gross_exposure=float((lv + sv).mean()), avg_net_exposure=float((lv - sv).mean()),
+                   max_gross_exposure=float((lv + sv).max()))
+    if bench is not None:
+        r = nav_df["nav"].pct_change()
+        b = nav_df["benchmark_nav"].astype(float).pct_change()
+        ok = r.notna() & b.notna()
+        if ok.sum() > 20 and b[ok].var() > 0:
+            out["realized_beta"] = float(r[ok].cov(b[ok]) / b[ok].var())
+            out["correlation"] = float(r[ok].corr(b[ok]))
     return out
 
 

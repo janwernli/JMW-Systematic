@@ -38,7 +38,35 @@ def git_commit() -> str | None:
 
 
 def assumptions(cfg: StrategyConfig, info: ProviderInfo, benchmark: str | None) -> list[dict]:
-    return [
+    ls = []
+    if cfg.is_long_short:
+        ls = [
+            {"key": "books", "text": f"Long the top {cfg.long_pct:.0%} and short the bottom {cfg.short_pct:.0%} of eligible "
+                                     f"stocks by 12-1 momentum, {cfg.min_names_per_side}-{cfg.max_names_per_side} names per "
+                                     f"side. Buffer: held names stay while in the top/bottom {cfg.buffer_exit_pct:.0%}."},
+            {"key": "weights", "text": f"Inverse {cfg.vol_lookback_sessions}-session realized-vol weights within each side, "
+                                       f"capped at {cfg.max_long_weight:.0%} per long and {cfg.max_short_weight:.0%} per "
+                                       "short (excess redistributed)."},
+            {"key": "neutrality", "text": f"Beta-neutral: short gross = long gross x beta_long / beta_short, betas from "
+                                          f"{cfg.beta_lookback_sessions} sessions vs. the benchmark, shrunk "
+                                          f"{cfg.beta_shrink:.0%} toward 1."},
+            {"key": "vol_target", "text": f"Gross scaled to a {cfg.target_vol:.0%} annualized ex-ante vol (trailing "
+                                          f"{cfg.vol_lookback_sessions} sessions), within {cfg.min_side_gross:.0%}-"
+                                          f"{cfg.max_side_gross:.0%} per side and {cfg.max_total_gross:.0%} total. Per-name "
+                                          "caps and neutrality take priority over the minimum gross."},
+            {"key": "crash_guard", "text": (f"Crash guard: short book x {cfg.crash_short_scale:g} when the benchmark's "
+                                            f"{cfg.crash_market_lookback_sessions}-session return < 0 and its "
+                                            f"{cfg.vol_lookback_sessions}-session vol > {cfg.crash_market_vol_threshold:.0%}."
+                                            if cfg.crash_guard else "Crash guard disabled.")},
+            {"key": "shorts", "text": f"Shorts need a raw close > ${cfg.short_min_price:g}. ASSUMED borrow fee "
+                                      f"{cfg.borrow_fee_annual:.2%}/yr charged daily on short market value; short proceeds "
+                                      "are held as cash earning 0%; shorts pay dividends on the ex-date; no locates, recalls "
+                                      "or hard-to-borrow costs are modelled."},
+            {"key": "stop_loss", "text": (f"Short stop-loss: when a close is {cfg.short_stop_loss:.0%} above the average short "
+                                          "entry, the short is covered at the next open (automatic) and may not be re-shorted "
+                                          "until the next monthly signal." if cfg.short_stop_loss else "No short stop-loss.")},
+        ]
+    return ls + [
         {"key": "signal", "text": f"12-1 momentum = TR(t-{cfg.skip_sessions}) / TR(t-{cfg.lookback_sessions}) - 1, "
                                   "computed after the close of the last NYSE session of each month and frozen."},
         {"key": "fills", "text": "Orders fill at the next session's OPEN. If a stock has no opening price, it is not "
@@ -47,14 +75,17 @@ def assumptions(cfg: StrategyConfig, info: ProviderInfo, benchmark: str | None) 
                                     "(not observed execution cost)."},
         {"key": "commission", "text": f"ASSUMED commission ${cfg.commission_per_order:g} per fill + "
                                       f"{cfg.commission_bps:g} bps of traded value."},
-        {"key": "sizing", "text": "Equal target weights of NAV at the open; whole shares only (floor); sells before buys; "
-                                  "buys in rank order until cash is exhausted; leftover = residual cash."},
+        {"key": "sizing", "text": ("Signed target weights of NAV at the open; whole shares only; order: reduce longs, "
+                                   "short sales, covers, then buys in rank order limited by cash."
+                                   if cfg.is_long_short else
+                                   "Equal target weights of NAV at the open; whole shares only (floor); sells before buys; "
+                                   "buys in rank order until cash is exhausted; leftover = residual cash.")},
         {"key": "dividends", "text": "Cash dividends are credited to cash on the ex-date (pay-date lag ignored); prices used "
                                      "for valuation are raw (unadjusted), so dividends are never double counted."},
         {"key": "splits", "text": "Splits adjust share counts on the ex-date; fractional shares are paid as cash-in-lieu."},
         {"key": "delisting", "text": "Holdings are converted to cash at their last available close on the delisting "
                                      "session. Real delisting proceeds may be materially lower."},
-        {"key": "gross", "text": "Gross NAV = net NAV + cumulative slippage & commissions (costs not compounded)."},
+        {"key": "gross", "text": "Gross NAV = net NAV + cumulative slippage, commissions and borrow fees (not compounded)."},
         {"key": "benchmark", "text": f"Benchmark {benchmark or 'n/a'}: "
                                      + ("total return (dividends reinvested via the same TR index)."
                                         if info.benchmark_return_basis == "total_return"
@@ -72,7 +103,8 @@ def create_run(db: Database, cfg: StrategyConfig, info: ProviderInfo, data_versi
         cur = conn.execute(
             "INSERT INTO backtest_runs (name, status, progress, config_id, config_json, provider, data_label,"
             " data_version, data_import_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (name or f"Top {cfg.top_n} / {cfg.slippage_bps:g}bps", "queued", 0.0, cfg_id, cfg.canonical_json(),
+            (name or (f"L/S {cfg.long_pct:.0%}/{cfg.short_pct:.0%} vol {cfg.target_vol:.0%}" if cfg.is_long_short
+                      else f"Long-only top {cfg.top_n}") + f" / {cfg.slippage_bps:g}bps", "queued", 0.0, cfg_id, cfg.canonical_json(),
              info.key, info.data_label, data_version, imp, utcnow()))
         run_id = cur.lastrowid
         log_event(conn, "info", "backtest", f"Backtest #{run_id} queued", run_id=run_id,
@@ -108,6 +140,13 @@ def persist_result(db: Database, run_id: int, res: BacktestResult, info: Provide
     reb_dicts = [{"status": r.status, "turnover": r.turnover, "slippage_cost": r.slippage_cost,
                   "commission": r.commission} for r in res.rebalances]
     metrics = compute_metrics(nav, reb_dicts, cfg.initial_capital)
+    metrics["mode"] = cfg.mode
+    metrics["borrow_fees"] = float(-sum(e.amount for _, e in res.cash_events if e.kind == "borrow_fee"))
+    metrics["short_dividends_paid"] = float(-sum(e.amount for _, e in res.cash_events
+                                                 if e.kind == "dividend" and e.amount < 0))
+    metrics["stop_losses"] = len(res.stops)
+    metrics["crash_guard_months"] = sum(1 for r in res.rebalances
+                                        if r.signals.diagnostics.get("crash_guard", {}).get("active"))
     metrics["benchmark_symbol"] = res.benchmark_symbol
     metrics["benchmark_return_basis"] = info.benchmark_return_basis if res.benchmark_symbol else None
     repro = {
@@ -121,9 +160,10 @@ def persist_result(db: Database, run_id: int, res: BacktestResult, info: Provide
     with db.transaction() as conn:
         conn.executemany(
             "INSERT INTO backtest_nav (run_id, session, nav, gross_nav, cash, positions_value, benchmark_nav, positions,"
-            " stale_marks) VALUES (?,?,?,?,?,?,?,?,?)",
+            " stale_marks, long_value, short_value) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             [(run_id, s, r.nav, r.gross_nav, r.cash, r.positions_value,
-              None if pd.isna(r.benchmark_nav) else float(r.benchmark_nav), int(r.positions), int(r.stale_marks))
+              None if pd.isna(r.benchmark_nav) else float(r.benchmark_nav), int(r.positions), int(r.stale_marks),
+              float(r.long_value), float(r.short_value))
              for s, r in nav.iterrows()])
         for rec in res.rebalances:
             set_id = None
@@ -133,15 +173,22 @@ def persist_result(db: Database, run_id: int, res: BacktestResult, info: Provide
             rid = conn.execute(
                 "INSERT INTO backtest_rebalances (run_id, signal_session, fill_session, signal_set_id, universe_count,"
                 " eligible_count, selected_count, nav_at_open, buy_value, sell_value, turnover, slippage_cost, commission,"
-                " cash_after, unfilled_json, status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " cash_after, unfilled_json, status, diagnostics_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (run_id, rec.signal_session, rec.fill_session, set_id, sig.universe_count, sig.eligible_count,
                  sig.selected_count, rec.nav_at_open, rec.buy_value, rec.sell_value, rec.turnover, rec.slippage_cost,
-                 rec.commission, rec.cash_after, json.dumps(rec.unfilled), rec.status)).lastrowid
+                 rec.commission, rec.cash_after, json.dumps(rec.unfilled), rec.status,
+                 json.dumps(sig.diagnostics, default=str))).lastrowid
             conn.executemany(
                 "INSERT INTO backtest_fills (run_id, rebalance_id, session, symbol, side, shares, ref_price, fill_price,"
-                " gross_value, slippage_cost, commission, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " gross_value, slippage_cost, commission, reason, position_effect) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [(run_id, rid, rec.fill_session, f.symbol, f.side, f.shares, f.ref_price, f.fill_price, f.gross_value,
-                  f.slippage_cost, f.commission, f.reason) for f in rec.fills])
+                  f.slippage_cost, f.commission, f.reason, f.effect) for f in rec.fills])
+        conn.executemany(
+            "INSERT INTO backtest_fills (run_id, rebalance_id, session, symbol, side, shares, ref_price, fill_price,"
+            " gross_value, slippage_cost, commission, reason, position_effect) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [(run_id, None, e.fill_session, f.symbol, f.side, f.shares, f.ref_price, f.fill_price, f.gross_value,
+              f.slippage_cost, f.commission, f"stop_loss (trigger {e.trigger_session})", f.effect)
+             for e in res.stops for f in e.fills])
         conn.executemany(
             "INSERT INTO backtest_cash_events (run_id, session, kind, symbol, amount, note) VALUES (?,?,?,?,?,?)",
             [(run_id, s, e.kind, e.symbol, e.amount, e.note) for s, e in res.cash_events])

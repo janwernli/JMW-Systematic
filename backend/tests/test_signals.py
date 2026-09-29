@@ -14,7 +14,7 @@ BASE = 100.0 + np.arange(N)  # close_i = 100 + i
 
 
 def cfg(**kw):
-    base = dict(min_adv_usd=0, min_price=5)
+    base = dict(mode="long_only", min_adv_usd=0, min_price=5)
     base.update(kw)
     return StrategyConfig(**base)
 
@@ -100,7 +100,7 @@ def test_liquidity_filter_and_complete_window():
     holey[t - 3] = np.nan               # one missing bar in the 20-session ADV window
     p = make_panel(CAL, {"LIQ": {"close": BASE, "volume": vol_ok}, "ILL": {"close": BASE, "volume": vol_low},
                          "HOL": {"close": holey, "volume": vol_ok}})
-    tab = compute_signals(p, t, StrategyConfig()).table.set_index("symbol")
+    tab = compute_signals(p, t, StrategyConfig(mode="long_only")).table.set_index("symbol")
     assert tab.loc["LIQ", "eligible"]
     assert tab.loc["ILL", "reason"] == "adv_below_min"
     assert tab.loc["HOL", "reason"] == "missing_liquidity_data"

@@ -33,14 +33,19 @@ from ..strategy.config import StrategyConfig
 from ..strategy.execution import (
     CostModel,
     apply_corporate_actions,
+    borrow_fee,
     close_prices,
+    cover_shorts,
     delisting_cashouts,
     execute_rebalance,
+    exposures,
     mark_to_market,
     marks_at,
     open_prices,
     preopen_marks,
     r2,
+    short_stop_triggers,
+    update_basis,
 )
 from ..strategy.signals import SignalResult, compute_signals
 
@@ -66,18 +71,28 @@ def store_signal_set(conn: sqlite3.Connection, sig: SignalResult, context: str, 
                      run_id: int | None = None, portfolio_id: int | None = None) -> int:
     cur = conn.execute(
         "INSERT INTO signal_sets (context, run_id, portfolio_id, signal_session, config_hash, data_version,"
-        " universe_count, eligible_count, selected_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " universe_count, eligible_count, selected_count, created_at, diagnostics_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (context, run_id, portfolio_id, sig.session, cfg_hash, data_version, sig.universe_count,
-         sig.eligible_count, sig.selected_count, utcnow()))
+         sig.eligible_count, sig.selected_count, utcnow(), json.dumps(sig.diagnostics, default=str)))
     set_id = cur.lastrowid
     tab = sig.table
     conn.executemany(
         "INSERT INTO signal_rows (set_id, symbol, close_raw, adv20, session_t21, session_t252, tr_t21, tr_t252,"
-        " valid_history, momentum, eligible, reason, rank, selected, target_weight) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " valid_history, momentum, eligible, reason, rank, selected, target_weight, side, percentile, vol, beta)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [(set_id, r.symbol, r.close_raw, r.adv20, r.session_t21, r.session_t252, r.tr_t21, r.tr_t252,
-          r.valid_history, r.momentum, int(r.eligible), r.reason, _int_or_none(r.rank), int(r.selected), float(r.target_weight)) for r in tab.itertuples(index=False)],
+          r.valid_history, r.momentum, int(r.eligible), r.reason, _int_or_none(r.rank), int(r.selected),
+          float(r.target_weight), r.side if isinstance(r.side, str) else None, _float_or_none(r.percentile),
+          _float_or_none(r.vol), _float_or_none(r.beta)) for r in tab.itertuples(index=False)],
     )
     return set_id
+
+
+def _float_or_none(v) -> float | None:
+    try:
+        return None if v is None or v is pd.NA or np.isnan(v) else float(v)
+    except TypeError:
+        return None
 
 
 def _int_or_none(v) -> int | None:
@@ -120,8 +135,9 @@ class PaperLedger:
         return StrategyConfig.model_validate_json(row["config_json"])
 
     def positions(self, pid: int) -> dict[str, int]:
+        """Signed share counts (negative = short)."""
         return {r["symbol"]: r["shares"] for r in self.db.query(
-            "SELECT symbol, shares FROM positions WHERE portfolio_id=? AND shares>0", (pid,))}
+            "SELECT symbol, shares FROM positions WHERE portfolio_id=? AND shares<>0", (pid,))}
 
     # ------------------------------------------------------------------ lifecycle
     def initialize(self, cfg: StrategyConfig, inception_session: str | None = None, name: str | None = None) -> dict:
@@ -281,81 +297,158 @@ class PaperLedger:
             cfg = StrategyConfig.model_validate_json(cfg_row["config_json"])
             cash = port["cash"]
             cum_costs = port["cum_costs"]
-            shares = {r["symbol"]: r["shares"] for r in conn.execute(
-                "SELECT symbol, shares FROM positions WHERE portfolio_id=? AND shares>0", (pid,))}
-            before = dict(shares)
+            rows = conn.execute("SELECT symbol, shares, cost_basis FROM positions WHERE portfolio_id=?", (pid,)).fetchall()
+            shares = {r["symbol"]: r["shares"] for r in rows if r["shares"] != 0}
+            basis = {r["symbol"]: r["cost_basis"] for r in rows if r["shares"] != 0}
 
-            # 1. pre-open corporate actions
+            # 1. pre-open corporate actions (shorts pay dividends / cash-in-lieu)
             shares, evs = apply_corporate_actions(panel, t, shares)
             for e in evs:
                 cash = r2(cash + e.amount)
                 self._cash(conn, pid, s, e.kind, e.symbol, e.amount, cash, e.note)
-            for sym in before:
-                if shares.get(sym, 0) != before[sym]:
-                    self._set_position(conn, pid, sym, shares.get(sym, 0), s, split_from=before[sym])
+            for sym in list(basis):
+                if sym not in shares:
+                    basis.pop(sym)
 
-            # 2. open: execute an applied plan whose fill session is today
+            # 2a. open: stop-loss covers triggered at the previous close
+            stop_orders = conn.execute(
+                "SELECT * FROM paper_orders WHERE portfolio_id=? AND origin='stop_loss' AND status='pending' "
+                "AND fill_session=?", (pid, s)).fetchall()
+            if stop_orders:
+                cash, cum_costs, shares = self._execute_stops(conn, panel, pid, t, stop_orders, cfg, shares, basis,
+                                                              cash, cum_costs)
+
+            # 2b. open: execute an applied plan whose fill session is today
             plan = conn.execute("SELECT * FROM rebalance_plans WHERE portfolio_id=? AND status='applied' AND fill_session=?",
                                 (pid, s)).fetchone()
             if plan:
-                cash, cum_costs, shares = self._execute_plan(conn, panel, pid, t, plan, cfg, shares, cash, cum_costs)
+                cash, cum_costs, shares = self._execute_plan(conn, panel, pid, t, plan, cfg, shares, basis, cash,
+                                                             cum_costs)
 
-            # 3. delisting cash-outs at the close
+            # 3. delisting close-outs at the close
             shares2, evs = delisting_cashouts(panel, t, shares)
             for e in evs:
                 cash = r2(cash + e.amount)
                 self._cash(conn, pid, s, e.kind, e.symbol, e.amount, cash, e.note)
-                self._set_position(conn, pid, e.symbol, 0, s)
+                basis.pop(e.symbol, None)
                 log_event(conn, "warning", "corporate_action", f"{e.symbol} delisted: {e.note}", portfolio_id=pid, session=s)
             shares = shares2
 
-            # 4. close valuation
+            # 4. borrow fee on short market value, then close valuation
+            fee, short_value = borrow_fee(panel, t, shares, cfg.borrow_fee_annual)
+            if fee:
+                cash = r2(cash - fee)
+                cum_costs = r2(cum_costs + fee)
+                self._cash(conn, pid, s, "borrow_fee", None, -fee, cash,
+                           f"{cfg.borrow_fee_annual:.2%}/yr on short value ${short_value:,.2f} (assumed)")
+            self._sync_positions(conn, pid, shares, basis, s)
             self._record_close(conn, panel, pid, t, cash, shares, cum_costs)
             conn.execute("UPDATE paper_portfolios SET as_of_session=?, cash=?, cum_costs=? WHERE id=?",
                          (s, cash, cum_costs, pid))
 
-            # 5. month-end signal
+            # 5. short stop-loss checks on the close (automatic cover at the next open)
+            if cfg.is_long_short:
+                pending = {r["symbol"] for r in conn.execute(
+                    "SELECT symbol FROM paper_orders WHERE portfolio_id=? AND origin='stop_loss' AND status='pending'", (pid,))}
+                nxt = self.cal.next_session(s)
+                for trig in short_stop_triggers(panel, t, shares, basis, cfg.short_stop_loss):
+                    if trig["symbol"] in pending or nxt is None:
+                        continue
+                    self._stop_order(conn, pid, trig["symbol"], -shares[trig["symbol"]], s, nxt,
+                                     f"Close {trig['close']:.2f} is {trig['move']:.0%} above average short entry "
+                                     f"{trig['entry']:.2f} (stop +{cfg.short_stop_loss:.0%}).")
+
+            # 6. month-end signal
             if self.cal.is_month_end(s):
                 self._form_plan(conn, panel, pid, t, cfg, port["config_id"], shares, cash, self.data_version_fn())
 
-    def _execute_plan(self, conn, panel: Panel, pid: int, t: int, plan, cfg: StrategyConfig,
-                      shares: dict[str, int], cash: float, cum_costs: float):
+    def _stop_order(self, conn, pid: int, symbol: str, qty: int, trigger: str, fill_session: str, why: str) -> None:
+        now = utcnow()
+        conn.execute(
+            "INSERT INTO paper_orders (portfolio_id, plan_id, symbol, intended_side, target_weight, est_shares, fill_session,"
+            " status, status_reason, created_at, updated_at, origin, trigger_session) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, None, symbol, "buy", 0.0, qty, fill_session, "pending", why, now, now, "stop_loss", trigger))
+        log_event(conn, "warning", "stop_loss", f"Short stop-loss triggered for {symbol}: {why} Cover {qty} sh at the "
+                  f"{fill_session} open (automatic, internal simulation).", portfolio_id=pid, session=trigger)
+
+    def _record_fills(self, conn, pid: int, s: str, fills, order_ids: dict[str, int], plan_id: int | None,
+                      shares: dict[str, int], basis: dict[str, float], cash: float) -> tuple[float, dict[str, int]]:
+        """Persist fills + cash transactions; update shares and signed cost basis in place."""
+        now = utcnow()
+        filled: dict[str, int] = {}
+        for f in fills:
+            fid = conn.execute(
+                "INSERT INTO paper_fills (portfolio_id, order_id, plan_id, session, symbol, side, shares, ref_price,"
+                " fill_price, gross_value, slippage_cost, commission, created_at, position_effect)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (pid, order_ids.get(f.symbol), plan_id, s, f.symbol, f.side, f.shares, f.ref_price, f.fill_price,
+                 f.gross_value, f.slippage_cost, f.commission, now, f.effect)).lastrowid
+            amount = f.gross_value if f.side == "sell" else -f.gross_value
+            cash = r2(cash + amount)
+            label = {"open_short": "short sale", "close_short": "buy to cover"}.get(f.effect, f.side)
+            self._cash(conn, pid, s, f.side, f.symbol, amount, cash,
+                       f"{label} {f.shares} @ {f.fill_price:.4f} (open {f.ref_price:.4f})", fid)
+            if f.commission:
+                cash = r2(cash - f.commission)
+                self._cash(conn, pid, s, "commission", f.symbol, -f.commission, cash, "Assumed commission", fid)
+            before = shares.get(f.symbol, 0)
+            update_basis(basis, before, f)
+            shares[f.symbol] = before + (f.shares if f.side == "buy" else -f.shares)
+            if shares[f.symbol] == 0:
+                shares.pop(f.symbol)
+            filled[f.symbol] = filled.get(f.symbol, 0) + f.shares
+        return cash, filled
+
+    def _execute_stops(self, conn, panel: Panel, pid: int, t: int, orders, cfg: StrategyConfig,
+                       shares: dict[str, int], basis: dict[str, float], cash: float, cum_costs: float):
         s = panel.sessions[t]
-        sig_rows = conn.execute("SELECT symbol, rank, target_weight FROM signal_rows WHERE set_id=? AND selected=1 "
-                                "ORDER BY rank", (plan["signal_set_id"],)).fetchall()
+        costs = CostModel(cfg.slippage_bps, cfg.commission_per_order, cfg.commission_bps)
+        syms = [o["symbol"] for o in orders if shares.get(o["symbol"], 0) < 0]
+        ex = cover_shorts(shares, cash, syms, open_prices(panel, t, syms), costs)
+        ids = {o["symbol"]: o["id"] for o in orders}
+        cash, filled = self._record_fills(conn, pid, s, ex.fills, ids, None, shares, basis, cash)
+        now = utcnow()
+        for o in orders:
+            q = filled.get(o["symbol"], 0)
+            if q:
+                st, why = "filled", None
+            elif shares.get(o["symbol"], 0) >= 0:
+                st, why = "no_trade", "Position no longer short at the open"
+            else:
+                st, why = "unfilled", "No opening price; cover retried at the next open"
+                nxt = self.cal.next_session(s)
+                if nxt:
+                    self._stop_order(conn, pid, o["symbol"], -shares[o["symbol"]], o["trigger_session"], nxt,
+                                     "Retry of stop-loss cover (no opening price).")
+            conn.execute("UPDATE paper_orders SET status=?, status_reason=COALESCE(?, status_reason), filled_shares=?,"
+                         " updated_at=? WHERE id=? AND status='pending'", (st, why, q, now, o["id"]))
+        return cash, r2(cum_costs + ex.slippage_cost + ex.commission), shares
+
+    def _execute_plan(self, conn, panel: Panel, pid: int, t: int, plan, cfg: StrategyConfig,
+                      shares: dict[str, int], basis: dict[str, float], cash: float, cum_costs: float):
+        s = panel.sessions[t]
+        sig_rows = conn.execute("SELECT symbol, rank, target_weight FROM signal_rows WHERE set_id=? AND selected=1",
+                                (plan["signal_set_id"],)).fetchall()
         targets = {r["symbol"]: r["target_weight"] for r in sig_rows}
-        rank_order = [r["symbol"] for r in sig_rows]
+        longs = sorted((r for r in sig_rows if r["target_weight"] > 0), key=lambda r: r["rank"])
+        shorts = sorted((r for r in sig_rows if r["target_weight"] < 0), key=lambda r: -r["rank"])
+        rank_order = [r["symbol"] for r in longs] + [r["symbol"] for r in shorts]
         symbols = set(shares) | set(targets)
         costs = CostModel(cfg.slippage_bps, cfg.commission_per_order, cfg.commission_bps)
         ex = execute_rebalance(shares, cash, targets, rank_order, open_prices(panel, t, symbols),
                                preopen_marks(panel, t, symbols), costs)
         now = utcnow()
         orders = {r["symbol"]: r for r in conn.execute("SELECT * FROM paper_orders WHERE plan_id=?", (plan["id"],))}
-        filled_syms: dict[str, int] = {}
         for f in ex.fills:
-            oid = orders[f.symbol]["id"] if f.symbol in orders else None
-            if oid is None:
+            if f.symbol not in orders:
                 oid = conn.execute(
                     "INSERT INTO paper_orders (portfolio_id, plan_id, symbol, intended_side, target_weight, est_shares,"
                     " fill_session, status, created_at, updated_at, status_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (pid, plan["id"], f.symbol, f.side, targets.get(f.symbol, 0.0), 0, s, "pending", now, now,
                      "Created at execution: sizing at the open differed from the close-based estimate")).lastrowid
                 orders[f.symbol] = {"id": oid, "est_shares": 0}
-            fid = conn.execute(
-                "INSERT INTO paper_fills (portfolio_id, order_id, plan_id, session, symbol, side, shares, ref_price,"
-                " fill_price, gross_value, slippage_cost, commission, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (pid, oid, plan["id"], s, f.symbol, f.side, f.shares, f.ref_price, f.fill_price, f.gross_value,
-                 f.slippage_cost, f.commission, now)).lastrowid
-            cash = r2(cash + (f.gross_value if f.side == "sell" else -f.gross_value))
-            self._cash(conn, pid, s, f.side, f.symbol, f.gross_value if f.side == "sell" else -f.gross_value, cash,
-                       f"{f.side} {f.shares} @ {f.fill_price:.4f} (open {f.ref_price:.4f})", fid)
-            if f.commission:
-                cash = r2(cash - f.commission)
-                self._cash(conn, pid, s, "commission", f.symbol, -f.commission, cash, "Assumed commission", fid)
-            new_q = shares.get(f.symbol, 0) + (f.shares if f.side == "buy" else -f.shares)
-            self._set_position(conn, pid, f.symbol, new_q, s, fill=f)
-            shares[f.symbol] = new_q
-            filled_syms[f.symbol] = filled_syms.get(f.symbol, 0) + f.shares
+        cash, filled_syms = self._record_fills(conn, pid, s, ex.fills, {k: v["id"] for k, v in orders.items()},
+                                               plan["id"], shares, basis, cash)
         if abs(cash - ex.cash_after) > 0.011:
             raise LedgerError(f"Cash reconciliation failed ({cash} vs {ex.cash_after}).", "reconciliation")
         unfilled = {u["symbol"]: u for u in ex.unfilled}
@@ -380,14 +473,21 @@ class PaperLedger:
                      (now, json.dumps(execution), plan["id"]))
         log_event(conn, "warning" if ex.unfilled else "info", "rebalance",
                   f"Plan #{plan['id']} executed at open of {s}: {len(ex.fills)} fills, {len(ex.unfilled)} unfilled, "
-                  f"residual cash ${ex.cash_after:,.2f}", portfolio_id=pid, session=s, payload=execution)
-        return cash, cum_costs, {k: v for k, v in shares.items() if v > 0}
+                  f"cash ${ex.cash_after:,.2f}", portfolio_id=pid, session=s, payload=execution)
+        return cash, cum_costs, shares
 
     def _form_plan(self, conn, panel: Panel, pid: int, t: int, cfg: StrategyConfig, cfg_id: int,
                    shares: dict[str, int], cash: float, dv: str) -> int:
         s = panel.sessions[t]
         fill = self.cal.next_session(s)
-        sig = compute_signals(panel, t, cfg)
+        last_signal = conn.execute("SELECT MAX(signal_session) FROM rebalance_plans WHERE portfolio_id=? AND "
+                                   "signal_session<?", (pid, s)).fetchone()[0] or ""
+        stopped = {r["symbol"] for r in conn.execute(
+            "SELECT DISTINCT symbol FROM paper_orders WHERE portfolio_id=? AND origin='stop_loss' AND trigger_session>? "
+            "AND trigger_session<=?", (pid, last_signal, s))}
+        held_long = {x for x, q in shares.items() if q > 0}
+        held_short = {x for x, q in shares.items() if q < 0 and x not in stopped}
+        sig = compute_signals(panel, t, cfg, held_long, held_short, stopped)
         set_id = store_signal_set(conn, sig, "paper", cfg.config_hash(), dv, portfolio_id=pid)
         targets = sig.target_weights()
         symbols = set(shares) | set(targets)
@@ -396,21 +496,56 @@ class PaperLedger:
         est = execute_rebalance(shares, cash, targets, list(sig.selected["symbol"]), close_prices(panel, t, symbols),
                                 marks_at(panel, t, symbols), costs)
         nav = est.nav_at_open
+        d = sig.diagnostics
+        longs = {k: v for k, v in targets.items() if v > 0}
+        shorts = {k: v for k, v in targets.items() if v < 0}
         checks = [
             {"rule": "Signal frozen before fills", "ok": True,
              "detail": f"Signals use data through the close of {s}; fills at the open of {fill}."},
             {"rule": "Data coverage at signal session", "ok": sig.coverage >= cfg.min_session_coverage,
              "detail": f"{sig.coverage:.1%} of {sig.universe_count} universe stocks have a bar on {s} "
                        f"(minimum {cfg.min_session_coverage:.0%})."},
-            {"rule": "Long-only, no leverage", "ok": est.cash_after >= 0 and all(q >= 0 for q in est.shares_after.values()),
-             "detail": f"Estimated residual cash ${est.cash_after:,.2f}; no short positions."},
-            {"rule": "Selection count", "ok": sig.selected_count <= cfg.top_n,
-             "detail": f"{sig.selected_count} selected of {sig.eligible_count} eligible (limit {cfg.top_n})."},
             {"rule": "All targets eligible", "ok": bool(sig.selected["eligible"].all()) if sig.selected_count else True,
              "detail": "Every target passes price, liquidity and history filters at the signal session."},
-            {"rule": "Weights sum to at most 100%", "ok": sum(targets.values()) <= 1 + 1e-9,
-             "detail": f"Sum of target weights {sum(targets.values()):.4f}."},
         ]
+        if cfg.is_long_short:
+            gl, gs = sum(longs.values()), -sum(shorts.values())
+            close = dict(zip(sig.table["symbol"], sig.table["close_raw"]))
+            checks += [
+                {"rule": "Gross exposure within cap", "ok": gl + gs <= cfg.max_total_gross + 1e-9,
+                 "detail": f"Long {gl:.1%} + short {gs:.1%} = {gl + gs:.1%} (cap {cfg.max_total_gross:.0%}); "
+                           f"net {gl - gs:+.1%}."},
+                {"rule": "Per-name caps", "ok": max(longs.values(), default=0) <= cfg.max_long_weight + 1e-9
+                    and max((-v for v in shorts.values()), default=0) <= cfg.max_short_weight + 1e-9,
+                 "detail": f"Largest long {max(longs.values(), default=0):.2%} (cap {cfg.max_long_weight:.0%}), largest "
+                           f"short {max((-v for v in shorts.values()), default=0):.2%} (cap {cfg.max_short_weight:.0%})."},
+                {"rule": "Beta-neutral (ex-ante)", "ok": abs(d.get("ex_ante_net_beta", 0)) <= 0.05 or
+                    bool(d.get("crash_guard", {}).get("active")),
+                 "detail": f"Net beta {d.get('ex_ante_net_beta', 0):+.3f} (β long {d.get('beta_long', 0):.2f}, "
+                           f"β short {d.get('beta_short', 0):.2f})"
+                           + ("; crash guard deliberately leaves the book net long." if d.get("crash_guard", {}).get("active") else ".")},
+                {"rule": "Short price floor", "ok": all((close.get(x) or 0) > cfg.short_min_price for x in shorts),
+                 "detail": f"All {len(shorts)} shorts close above ${cfg.short_min_price:g}."},
+                {"rule": "Volatility target", "ok": True,
+                 "detail": f"Ex-ante vol {d.get('ex_ante_vol', 0):.1%} vs target {cfg.target_vol:.0%}"
+                           + (f" ({'; '.join(d['binding'])})" if d.get("binding") else "") + "."},
+                {"rule": "Crash guard", "ok": True,
+                 "detail": ("ON: short book scaled" if d.get("crash_guard", {}).get("active") else "Off") +
+                           f" (market 24m return {_pct(d.get('crash_guard', {}).get('market_return'))}, "
+                           f"6m vol {_pct(d.get('crash_guard', {}).get('market_vol'))}; threshold "
+                           f"{cfg.crash_market_vol_threshold:.0%})."},
+                {"rule": "Cash stays positive", "ok": est.cash_after >= 0,
+                 "detail": f"Estimated cash after trading ${est.cash_after:,.2f} (short proceeds held as cash)."},
+            ]
+        else:
+            checks += [
+                {"rule": "Long-only, no leverage", "ok": est.cash_after >= 0 and all(q >= 0 for q in est.shares_after.values()),
+                 "detail": f"Estimated residual cash ${est.cash_after:,.2f}; no short positions."},
+                {"rule": "Selection count", "ok": sig.selected_count <= cfg.top_n,
+                 "detail": f"{sig.selected_count} selected of {sig.eligible_count} eligible (limit {cfg.top_n})."},
+                {"rule": "Weights sum to at most 100%", "ok": sum(targets.values()) <= 1 + 1e-9,
+                 "detail": f"Sum of target weights {sum(targets.values()):.4f}."},
+            ]
         status = "blocked" if sig.blocked_reason else "proposed"
         estimate = {
             "nav": nav, "cash_before": est.cash_before, "est_buy_value": est.buy_value, "est_sell_value": est.sell_value,
@@ -419,32 +554,36 @@ class PaperLedger:
             "price_basis": f"Signal-session close ({s}); actual fills use the {fill} open.",
             "universe_count": sig.universe_count, "eligible_count": sig.eligible_count,
             "selected_count": sig.selected_count, "coverage": sig.coverage, "unfilled_estimate": est.unfilled,
+            "mode": cfg.mode, "long_count": len(longs), "short_count": len(shorts),
+            "long_gross": sum(longs.values()), "short_gross": -sum(shorts.values()),
+            "stopped_shorts_excluded": sorted(stopped), "diagnostics": d,
         }
         cur = conn.execute(
             "INSERT INTO rebalance_plans (portfolio_id, signal_session, fill_session, signal_set_id, config_id, data_version,"
             " status, block_reason, estimate_json, checks_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (pid, s, fill, set_id, cfg_id, dv, status, sig.blocked_reason, json.dumps(estimate), json.dumps(checks), utcnow()))
+            (pid, s, fill, set_id, cfg_id, dv, status, sig.blocked_reason, json.dumps(estimate, default=str),
+             json.dumps(checks), utcnow()))
         plan_id = cur.lastrowid
         cur_marks = marks_at(panel, t, symbols)
-        by_sym = {f.symbol: f for f in est.fills}
         for sym in sorted(symbols):
             cur_q = shares.get(sym, 0)
             tgt_q = est.target_shares.get(sym, 0)
-            f = by_sym.get(sym)
-            if f is None and cur_q == tgt_q:
+            fs = [f for f in est.fills if f.symbol == sym]
+            if not fs and cur_q == tgt_q:
                 continue
-            px = f.fill_price if f else (cur_marks.get(sym) or 0.0)
+            side = ("buy" if tgt_q > cur_q else "sell") if not fs else fs[0].side
+            qty = sum(f.shares for f in fs)
+            value = sum(f.gross_value for f in fs)
+            px = fs[-1].fill_price if fs else (cur_marks.get(sym) or 0.0)
             conn.execute(
                 "INSERT INTO plan_orders (plan_id, symbol, side, current_shares, target_shares, est_shares, est_price,"
                 " est_value, est_cost, current_weight, target_weight, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (plan_id, sym, f.side if f else ("buy" if tgt_q > cur_q else "sell"), cur_q, tgt_q,
-                 f.shares if f else 0, px, f.gross_value if f else 0.0,
-                 (f.slippage_cost + f.commission) if f else 0.0,
+                (plan_id, sym, side, cur_q, tgt_q, qty, px, value, sum(f.slippage_cost + f.commission for f in fs),
                  (cur_q * cur_marks.get(sym, 0.0) / nav) if nav else 0.0, targets.get(sym, 0.0),
-                 None if f else "Estimated not executable (see unfilled estimate)"))
+                 ", ".join(f.effect.replace("_", " ") for f in fs) if fs else "Estimated not executable (see unfilled estimate)"))
         level = "warning" if status == "blocked" else "info"
         msg = (f"Rebalance BLOCKED for signal {s}: {sig.blocked_reason}" if status == "blocked" else
-               f"Rebalance plan #{plan_id} proposed from signal {s}: {sig.selected_count} targets, "
+               f"Rebalance plan #{plan_id} proposed from signal {s}: {len(longs)} long / {len(shorts)} short targets, "
                f"est. turnover {est.turnover:.1%}; awaiting decision before open of {fill}")
         log_event(conn, level, "rebalance", msg, portfolio_id=pid, session=s)
         return plan_id
@@ -455,29 +594,29 @@ class PaperLedger:
             "INSERT INTO cash_transactions (portfolio_id, session, kind, symbol, amount, balance_after, fill_id, note, created_at)"
             " VALUES (?,?,?,?,?,?,?,?,?)", (pid, session, kind, symbol, r2(amount), r2(balance), fill_id, note, utcnow()))
 
-    def _set_position(self, conn, pid, symbol, shares, session, fill=None, split_from=None):
-        row = conn.execute("SELECT * FROM positions WHERE portfolio_id=? AND symbol=?", (pid, symbol)).fetchone()
-        basis = row["cost_basis"] if row else 0.0
-        old = row["shares"] if row else 0
-        if fill is not None and fill.side == "buy":
-            basis = r2(basis + fill.gross_value + fill.commission)
-        elif fill is not None and fill.side == "sell" and old > 0:
-            basis = r2(basis * (old - fill.shares) / old)
-        elif split_from is not None and split_from > 0 and shares == 0:
-            basis = 0.0
-        if shares <= 0:
-            conn.execute("DELETE FROM positions WHERE portfolio_id=? AND symbol=?", (pid, symbol))
-            return
-        if row:
-            conn.execute("UPDATE positions SET shares=?, cost_basis=?, updated_session=? WHERE portfolio_id=? AND symbol=?",
-                         (shares, basis, session, pid, symbol))
-        else:
-            conn.execute("INSERT INTO positions (portfolio_id, symbol, shares, cost_basis, opened_session, updated_session)"
-                         " VALUES (?,?,?,?,?,?)", (pid, symbol, shares, basis, session, session))
+    def _sync_positions(self, conn, pid: int, shares: dict[str, int], basis: dict[str, float], session: str) -> None:
+        """Write current holdings (signed shares, signed cost basis) to the positions table."""
+        existing = {r["symbol"]: r for r in conn.execute("SELECT * FROM positions WHERE portfolio_id=?", (pid,))}
+        for sym in set(existing) | set(shares):
+            q = shares.get(sym, 0)
+            b = r2(basis.get(sym, 0.0))
+            row = existing.get(sym)
+            if q == 0:
+                if row:
+                    conn.execute("DELETE FROM positions WHERE portfolio_id=? AND symbol=?", (pid, sym))
+            elif row is None:
+                conn.execute("INSERT INTO positions (portfolio_id, symbol, shares, cost_basis, opened_session, updated_session)"
+                             " VALUES (?,?,?,?,?,?)", (pid, sym, q, b, session, session))
+            elif row["shares"] != q or abs(row["cost_basis"] - b) > 0.005:
+                flipped = (row["shares"] > 0) != (q > 0)
+                conn.execute("UPDATE positions SET shares=?, cost_basis=?, updated_session=?, opened_session=? "
+                             "WHERE portfolio_id=? AND symbol=?",
+                             (q, b, session, session if flipped else row["opened_session"], pid, sym))
 
     def _record_close(self, conn, panel: Panel, pid: int, t: int, cash: float, shares: dict[str, int], cum_costs: float):
         s = panel.sessions[t]
         value, stale_n, marks = mark_to_market(panel, t, shares)
+        long_v, short_v = exposures(panel, t, shares)
         nav = r2(cash + value)
         basis = {r["symbol"]: r["cost_basis"] for r in conn.execute(
             "SELECT symbol, cost_basis FROM positions WHERE portfolio_id=?", (pid,))}
@@ -498,8 +637,12 @@ class PaperLedger:
             bench = float(panel.tr[t, bj])
         conn.execute(
             "INSERT INTO paper_nav (portfolio_id, session, cash, positions_value, nav, gross_nav, benchmark_index,"
-            " positions, stale_marks, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (pid, s, cash, value, nav, r2(nav + cum_costs), bench, len(shares), stale_n, utcnow()))
+            " positions, stale_marks, created_at, long_value, short_value) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, s, cash, value, nav, r2(nav + cum_costs), bench, len(shares), stale_n, utcnow(), long_v, short_v))
         if stale_n:
             log_event(conn, "warning", "valuation", f"{stale_n} holding(s) valued at a carried-forward price on {s}",
                       portfolio_id=pid, session=s)
+
+
+def _pct(v) -> str:
+    return "n/a" if v is None else f"{v:+.1%}"

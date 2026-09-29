@@ -54,13 +54,20 @@ def test_apply_once_then_advance_to_latest(client):
     assert done["status"] == "executed" and done["fills"]
     assert {f["session"] for f in done["fills"]} == {"2026-09-01"}
     pos = client.get("/api/portfolio/positions").json()
-    assert pos["valuation_session"] == "2026-09-25" and 0 < len(pos["rows"]) <= 50
+    assert pos["valuation_session"] == "2026-09-25" and 0 < len(pos["rows"]) <= 200
+    # long-short default: signed weights (shorts negative) plus cash still sum to NAV
+    assert any(r["shares"] < 0 for r in pos["rows"]) and any(r["shares"] > 0 for r in pos["rows"])
     assert sum(r["weight"] for r in pos["rows"]) + pos["cash_weight"] == pytest.approx(1.0, abs=1e-6)
 
 
 def test_universe_and_stock_detail(client):
     u = client.get("/api/universe").json()
-    assert u["signal_session"] == "2026-09-25" and u["selected_count"] == 50
+    longs = [r for r in u["rows"] if r["selected"] and r["model_weight"] > 0]
+    shorts = [r for r in u["rows"] if r["selected"] and r["model_weight"] < 0]
+    assert u["signal_session"] == "2026-09-25" and u["selected_count"] == len(longs) + len(shorts)
+    assert 50 <= len(longs) <= 100 and 50 <= len(shorts) <= 100
+    assert max(r["rank"] for r in longs) < min(r["rank"] for r in shorts)   # winners long, losers short
+    assert all(r["close_raw"] > 10 for r in shorts)                         # short price floor
     top = next(r for r in u["rows"] if r["rank"] == 1)
     d = client.get(f"/api/universe/{top['symbol']}").json()
     sig = d["signal"]

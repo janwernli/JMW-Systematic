@@ -6,13 +6,14 @@ access below is at row index <= t.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
 from ..data.panel import Panel
 from .config import StrategyConfig
+from .long_short import build_books
 
 REASONS = {
     "eligible": "Eligible",
@@ -38,17 +39,28 @@ class SignalResult:
     selected_count: int
     coverage: float              # share of universe with a bar at t
     blocked_reason: str | None   # set when data is insufficient to rebalance
+    diagnostics: dict = field(default_factory=dict)   # long-short sizing details (empty for long-only)
 
     @property
     def selected(self) -> pd.DataFrame:
-        return self.table[self.table["selected"]].sort_values("rank")
+        """Targets in execution priority: longs by rank (best first), then shorts (worst first)."""
+        sel = self.table[self.table["selected"]]
+        longs = sel[sel["target_weight"] > 0].sort_values("rank")
+        shorts = sel[sel["target_weight"] < 0].sort_values("rank", ascending=False)
+        return pd.concat([longs, shorts])
 
     def target_weights(self) -> dict[str, float]:
+        """Signed target weights (fraction of NAV): positive = long, negative = short."""
         sel = self.selected
         return dict(zip(sel["symbol"], sel["target_weight"]))
 
 
-def compute_signals(panel: Panel, t: int, cfg: StrategyConfig) -> SignalResult:
+def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[str] | None = None,
+                    held_short: set[str] | None = None, blocked_shorts: set[str] | None = None) -> SignalResult:
+    """Eligibility + momentum ranking, then v1 (top-N equal weight) or v2 (long-short books) targets.
+
+    held_long / held_short feed the v2 rank buffer; blocked_shorts = names stopped out since the last signal.
+    """
     session = panel.sessions[t]
     inst = panel.instruments
     t21, t252 = t - cfg.skip_sessions, t - cfg.lookback_sessions
@@ -129,11 +141,22 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig) -> SignalResult:
     # Deterministic ordering: momentum desc, then ADV desc, then symbol asc.
     ranked = elig.sort_values(["momentum", "adv20", "symbol"], ascending=[False, False, True], kind="mergesort")
     table.loc[ranked.index, "rank"] = np.arange(1, len(ranked) + 1)
-    n_sel = min(cfg.top_n, len(ranked))
-    sel_idx = ranked.index[:n_sel]
-    table.loc[sel_idx, "selected"] = True
-    if n_sel:
-        table.loc[sel_idx, "target_weight"] = 1.0 / n_sel
+    diagnostics: dict = {}
+    table["side"] = None
+    table["percentile"] = np.nan
+    table["vol"] = np.nan
+    table["beta"] = np.nan
+    if cfg.is_long_short:
+        diagnostics = build_books(panel, t, cfg, table, held_long or set(), held_short or set(), blocked_shorts or set())
+        n_sel = int(table["selected"].sum())
+    else:
+        n_sel = min(cfg.top_n, len(ranked))
+        sel_idx = ranked.index[:n_sel]
+        table.loc[sel_idx, "selected"] = True
+        table["side"] = None
+        if n_sel:
+            table.loc[sel_idx, "target_weight"] = 1.0 / n_sel
+            table.loc[sel_idx, "side"] = "long"
 
     coverage = with_bar / universe if universe else 0.0
     blocked = None
@@ -144,9 +167,11 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig) -> SignalResult:
                    f"(minimum {cfg.min_session_coverage:.0%}); data is stale or incomplete.")
     elif n_sel == 0:
         blocked = "No eligible securities at the signal session."
+    elif cfg.is_long_short and not (diagnostics.get("long_names") and diagnostics.get("short_names")):
+        blocked = "Long-short books could not be formed: " + "; ".join(diagnostics.get("notes", []))
 
     return SignalResult(
         session=session, t=t, table=table.sort_values(["rank", "symbol"], na_position="last").reset_index(drop=True),
         universe_count=universe, eligible_count=len(ranked), selected_count=n_sel,
-        coverage=coverage, blocked_reason=blocked,
+        coverage=coverage, blocked_reason=blocked, diagnostics=diagnostics,
     )

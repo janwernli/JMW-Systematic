@@ -14,7 +14,7 @@ from app.strategy.config import StrategyConfig
 from .helpers import FixtureProvider, weekday_calendar
 
 CAL = weekday_calendar("2020-01-01", 60)
-CFG = StrategyConfig(lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3, min_adv_usd=0,
+CFG = StrategyConfig(mode="long_only", lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3, min_adv_usd=0,
                      min_price=1, slippage_bps=0, top_n=2)
 
 
