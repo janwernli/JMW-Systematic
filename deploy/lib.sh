@@ -43,17 +43,39 @@ install_requirements() {
   echo "$want" > "$stamp"
 }
 
+# Read-only GitHub token for release downloads from a PRIVATE repo (GITHUB_RELEASE_TOKEN in .env; the app
+# itself never reads it). Empty for a public repo.
+release_token() {
+  sed -n 's/^GITHUB_RELEASE_TOKEN=//p' "$REPO_DIR/.env" 2>/dev/null | tail -n 1 | tr -d '"'"'"' \r'
+}
+
+# Download one asset of the frontend-latest release to $2: via the API with a token (private repo),
+# otherwise from the public download URL.
+download_asset() {
+  local slug="$1" name="$2" out="$3" token id
+  token="$(release_token)"
+  if [ -z "$token" ]; then
+    curl -fsSL --retry 3 -o "$out" "https://github.com/$slug/releases/download/frontend-latest/$name"
+    return
+  fi
+  id="$(curl -fsSL --retry 3 -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/$slug/releases/tags/frontend-latest" \
+        | python3 -c 'import json,sys; n=sys.argv[1]; print(next(a["id"] for a in json.load(sys.stdin)["assets"] if a["name"]==n))' "$name")" \
+    || return 1
+  curl -fsSL --retry 3 -H "Authorization: Bearer $token" -H "Accept: application/octet-stream" -o "$out" \
+    "https://api.github.com/repos/$slug/releases/assets/$id"
+}
+
 # Download the frontend build published by .github/workflows/frontend.yml and swap it in atomically.
 fetch_frontend() {
-  local slug url tmp local_tree built_tree
+  local slug tmp local_tree built_tree
   slug="$(repo_slug)"
-  url="https://github.com/$slug/releases/download/frontend-latest"
   tmp="$(mktemp -d)"
-  log "Downloading the frontend build from github.com/$slug (release frontend-latest)"
-  if ! curl -fsSL --retry 3 -o "$tmp/frontend-dist.tar.gz" "$url/frontend-dist.tar.gz" \
-     || ! curl -fsSL --retry 3 -o "$tmp/frontend-dist.tar.gz.sha256" "$url/frontend-dist.tar.gz.sha256"; then
+  log "Downloading the frontend build from github.com/$slug (release frontend-latest$([ -n "$(release_token)" ] && echo ', with token'))"
+  if ! download_asset "$slug" frontend-dist.tar.gz "$tmp/frontend-dist.tar.gz" \
+     || ! download_asset "$slug" frontend-dist.tar.gz.sha256 "$tmp/frontend-dist.tar.gz.sha256"; then
     rm -rf "$tmp"
-    warn "no frontend build found yet (has the 'Frontend build' GitHub Action run on main?). The API works; the dashboard page will be missing until the build exists and you run deploy/update.sh."
+    warn "could not download the frontend build. Either the 'Frontend build' GitHub Action has not run on main yet, or the repo is private and GITHUB_RELEASE_TOKEN in .env is missing, wrong or expired. The API keeps working; the dashboard page stays at the previous build (or missing)."
     return 0
   fi
   (cd "$tmp" && sha256sum --quiet -c frontend-dist.tar.gz.sha256) || die "frontend build checksum mismatch"

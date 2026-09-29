@@ -366,7 +366,7 @@ There are 155 backend tests, built on constructed datasets with hand-checkable r
 
 ## 14. Git and GitHub
 
-The repository is pushed to the **public** GitHub repo `janwernli/JMW-Systematic` (`origin`). Keys, the database and logs are never committed (see below).
+The repository is pushed to the GitHub repo `janwernli/JMW-Systematic` (`origin`). It can be public or private; for the VM, see [Making the repository private](#making-the-repository-private). Keys, the database and logs are never committed (see below).
 
 Every push to `main` runs the **Frontend build** GitHub Action (`.github/workflows/frontend.yml`). It builds `frontend/dist` and publishes it as `frontend-dist.tar.gz`, with a SHA-256 file, on the rolling release `frontend-latest`. The Azure VM downloads it from there instead of running Node.
 
@@ -433,6 +433,8 @@ git clone https://github.com/janwernli/JMW-Systematic.git ~/JMW-Systematic
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up          # log in with the link it prints
 ```
+
+If the repository is already private, create the deploy key first ([Making the repository private](#making-the-repository-private), step 1), then clone with `git clone git@github.com:janwernli/JMW-Systematic.git ~/JMW-Systematic`.
 
 In the Tailscale admin console, enable **MagicDNS** and **HTTPS certificates** (DNS page) so `tailscale serve` can use `https://<machine>.<tailnet>.ts.net`.
 
@@ -547,3 +549,41 @@ sudo systemctl start jmw-backend jmw-daily.timer
 ```
 
 Orders placed after the backup date are not in the restored database. The Alpaca account stays the source of truth: the next run syncs positions and order statuses from Alpaca, and deterministic client order ids stop an order from being sent twice. If a restored month-end plan was already approved in the lost period, approve it again.
+
+### Making the repository private
+
+The VM then needs credentials for two things: `git pull`, and downloading the frontend build. Set both up **before** you switch the repo to private; they also work while it is public.
+
+**1. `git pull` with a read-only deploy key** (on the VM):
+
+```bash
+ssh-keygen -t ed25519 -N "" -C "jmw-vm deploy key" -f ~/.ssh/jmw_deploy
+cat ~/.ssh/jmw_deploy.pub         # copy this line
+```
+
+- On GitHub, go to the repo's **Settings → Deploy keys → Add deploy key**. Paste the line and leave **Allow write access** unticked.
+- Then point the VM's checkout at SSH:
+
+```bash
+cat >> ~/.ssh/config <<'EOF'
+Host github.com
+  IdentityFile ~/.ssh/jmw_deploy
+  IdentitiesOnly yes
+EOF
+ssh -o StrictHostKeyChecking=accept-new -T git@github.com    # "Hi janwernli/JMW-Systematic! ..." = OK
+cd ~/JMW-Systematic && git remote set-url origin git@github.com:janwernli/JMW-Systematic.git && git pull
+```
+
+**2. The frontend download with a read-only token:**
+
+1. Go to **GitHub → Settings → Developer settings → Fine-grained personal access tokens → Generate new token**.
+2. Set **Repository access** to *Only select repositories: JMW-Systematic*.
+3. Set **Permissions** to *Contents: Read-only*.
+4. Put the token in the VM's `.env` as `GITHUB_RELEASE_TOKEN=...`. Only the deploy scripts read it, and `.env` is `chmod 600`.
+5. Run `bash deploy/update.sh`. It should say *"with token"* when downloading.
+6. Note the token's expiry date. When it expires, `update.sh` warns that the download failed and keeps the previous build.
+
+**3. Switch the repo to private** (GitHub → Settings → General → Danger zone), then run `bash deploy/update.sh` once more to check.
+
+- The GitHub Action keeps working on a private repo. Each build (about a minute) counts against the free Actions minutes: 2,000 per month on the free plan.
+- Your PC is unaffected: it pushes with your normal GitHub login.

@@ -199,3 +199,10 @@ def test_env_example_lists_vm_variables_with_safe_defaults():
         assert key in values, key
     assert values["BROKER_TRADING_ENABLED"] == "false" and values["ALPACA_DATA_FEED"] == "sip"
     assert values["APP_HOST"] == "127.0.0.1" and values["ALPACA_API_SECRET_KEY"] == "" and values["NTFY_TOPIC"] == ""
+    assert values["GITHUB_RELEASE_TOKEN"] == ""          # private-repo frontend downloads (deploy scripts only)
+
+
+def test_deploy_scripts_support_a_private_repo():
+    lib = (DEPLOY / "lib.sh").read_text(encoding="utf-8")
+    assert "GITHUB_RELEASE_TOKEN" in lib and "api.github.com/repos/$slug/releases/assets/" in lib
+    assert "application/octet-stream" in lib
