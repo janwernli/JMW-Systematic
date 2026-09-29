@@ -21,6 +21,7 @@ import { RebalanceDesk } from "./pages/RebalanceDesk";
 import { ResearchLab } from "./pages/ResearchLab";
 import { Ledger } from "./pages/Ledger";
 import { Trading } from "./pages/Trading";
+import { Variants } from "./pages/Variants";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1, refetchOnWindowFocus: false } },
@@ -40,6 +41,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="portfolio" element={<Portfolio />} />
               <Route path="rebalance" element={<RebalanceDesk />} />
               <Route path="research" element={<ResearchLab />} />
+              <Route path="variants" element={<Variants />} />
               <Route path="ledger" element={<Ledger />} />
             </Route>
           </Routes>

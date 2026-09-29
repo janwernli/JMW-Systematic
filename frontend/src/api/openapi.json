@@ -1646,6 +1646,111 @@
           }
         }
       }
+    },
+    "/api/research/variants": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Overview",
+        "operationId": "overview_api_research_variants_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariantsOverview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/variants/studies": {
+      "post": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Launch",
+        "description": "Queue one backtest per variant on the same data version and period (no parameter search).",
+        "operationId": "launch_api_research_variants_studies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VariantStudy"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/research/variants/studies/{study_id}": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Result",
+        "operationId": "result_api_research_variants_studies__study_id__get",
+        "parameters": [
+          {
+            "name": "study_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Study Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1697,6 +1802,61 @@
           "pending_plan_id"
         ],
         "title": "AdvanceResponse"
+      },
+      "AlphaSummary": {
+        "properties": {
+          "alpha_annual": {
+            "type": "number",
+            "title": "Alpha Annual"
+          },
+          "t_alpha": {
+            "type": "number",
+            "title": "T Alpha"
+          },
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "months": {
+            "type": "integer",
+            "title": "Months"
+          },
+          "beta_mkt": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta Mkt"
+          },
+          "beta_mom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta Mom"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alpha_annual",
+          "t_alpha",
+          "start",
+          "end",
+          "months"
+        ],
+        "title": "AlphaSummary"
       },
       "AutomationRun": {
         "properties": {
@@ -3430,6 +3590,158 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "MarginFlag": {
+        "properties": {
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "breaches": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Breaches"
+          },
+          "gross_exposure": {
+            "type": "number",
+            "title": "Gross Exposure"
+          },
+          "equity": {
+            "type": "number",
+            "title": "Equity"
+          },
+          "short_requirement": {
+            "type": "number",
+            "title": "Short Requirement"
+          },
+          "long_requirement": {
+            "type": "number",
+            "title": "Long Requirement"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session",
+          "breaches",
+          "gross_exposure",
+          "equity",
+          "short_requirement",
+          "long_requirement"
+        ],
+        "title": "MarginFlag"
+      },
+      "MarginReport": {
+        "properties": {
+          "limits": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Limits"
+          },
+          "gross_breach_days": {
+            "type": "integer",
+            "title": "Gross Breach Days"
+          },
+          "maintenance_breach_days": {
+            "type": "integer",
+            "title": "Maintenance Breach Days"
+          },
+          "first_gross_breach": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Gross Breach"
+          },
+          "first_maintenance_breach": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Maintenance Breach"
+          },
+          "max_gross_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Gross Exposure"
+          },
+          "max_gross_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Gross Session"
+          },
+          "min_equity_to_requirement": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Equity To Requirement"
+          },
+          "min_equity_to_requirement_session": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Equity To Requirement Session"
+          },
+          "flagged_days": {
+            "items": {
+              "$ref": "#/components/schemas/MarginFlag"
+            },
+            "type": "array",
+            "title": "Flagged Days"
+          },
+          "flagged_days_truncated": {
+            "type": "boolean",
+            "title": "Flagged Days Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "limits",
+          "gross_breach_days",
+          "maintenance_breach_days",
+          "first_gross_breach",
+          "first_maintenance_breach",
+          "max_gross_exposure",
+          "max_gross_session",
+          "min_equity_to_requirement",
+          "min_equity_to_requirement_session",
+          "flagged_days",
+          "flagged_days_truncated"
+        ],
+        "title": "MarginReport"
+      },
       "MarketClock": {
         "properties": {
           "now_utc": {
@@ -3912,6 +4224,114 @@
         },
         "type": "object",
         "title": "PaperInitRequest"
+      },
+      "PeriodStats": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "total_return": {
+            "type": "number",
+            "title": "Total Return"
+          },
+          "cagr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cagr"
+          },
+          "ann_vol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ann Vol"
+          },
+          "sharpe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sharpe"
+          },
+          "sortino": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "title": "Max Drawdown"
+          },
+          "max_dd_peak": {
+            "type": "string",
+            "title": "Max Dd Peak"
+          },
+          "max_dd_trough": {
+            "type": "string",
+            "title": "Max Dd Trough"
+          },
+          "max_dd_recovery": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Dd Recovery"
+          },
+          "alpha": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AlphaSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "total_return",
+          "cagr",
+          "ann_vol",
+          "sharpe",
+          "sortino",
+          "max_drawdown",
+          "max_dd_peak",
+          "max_dd_trough",
+          "max_dd_recovery"
+        ],
+        "title": "PeriodStats"
       },
       "PlanDecisionRequest": {
         "properties": {
@@ -6329,6 +6749,54 @@
             "description": "Per-name cap on shorts, fraction of NAV",
             "default": 0.015
           },
+          "beta_neutral": {
+            "type": "boolean",
+            "title": "Beta Neutral",
+            "description": "Size the short book so the overlay is beta-neutral (short gross = long gross x beta_L / beta_S); off = equal dollar gross per side under vol targeting",
+            "default": true
+          },
+          "sizing": {
+            "type": "string",
+            "enum": [
+              "vol_target",
+              "fixed"
+            ],
+            "title": "Sizing",
+            "description": "vol_target: gross set by target_vol within the side limits; fixed: fixed_long_gross / fixed_short_gross (e.g. 130/30), no vol target",
+            "default": "vol_target"
+          },
+          "fixed_long_gross": {
+            "type": "number",
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Fixed Long Gross",
+            "description": "Long book gross when sizing = fixed, fraction of NAV",
+            "default": 1.3
+          },
+          "fixed_short_gross": {
+            "type": "number",
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Fixed Short Gross",
+            "description": "Short book gross when sizing = fixed, fraction of NAV",
+            "default": 0.3
+          },
+          "core_beta": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Core Beta",
+            "description": "SPY core: hold core_beta x NAV in the benchmark ETF under the long/short overlay. Rebalanced monthly; exempt from beta/sector neutrality; counts toward max_total_gross",
+            "default": 0.0
+          },
+          "margin_debit_spread": {
+            "type": "number",
+            "maximum": 0.5,
+            "minimum": 0.0,
+            "title": "Margin Debit Spread",
+            "description": "ASSUMED margin-loan rate over RF (Ken French), per year, ACT/360. Only books whose longs exceed NAV + short proceeds (SPY core + overlay, 130/30) borrow",
+            "default": 0.025
+          },
           "sector_neutral": {
             "type": "boolean",
             "title": "Sector Neutral",
@@ -6466,6 +6934,220 @@
         "type": "object",
         "title": "StrategyConfig",
         "description": "All tunable inputs of the strategy.\n\nLong the strongest / short the weakest decile by the selected momentum signal, with a rank\nbuffer, inverse-volatility weights with per-name caps, beta- and sector-neutral books scaled\nto a volatility target within gross limits, a momentum-crash guard, a short price floor, a\nhard-to-borrow liquidity screen, borrow fees and a short stop-loss.\nEvery backtest run and every paper-portfolio configuration version stores the full JSON."
+      },
+      "StudyRequest": {
+        "properties": {
+          "start_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Date"
+          },
+          "end_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Date"
+          }
+        },
+        "type": "object",
+        "title": "StudyRequest"
+      },
+      "StudyResult": {
+        "properties": {
+          "study": {
+            "$ref": "#/components/schemas/VariantStudy"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/StudyVariantResult"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/StudySeriesPoint"
+            },
+            "type": "array",
+            "title": "Series"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "study",
+          "results",
+          "series",
+          "notes"
+        ],
+        "title": "StudyResult"
+      },
+      "StudyRun": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "type": "number",
+            "title": "Progress"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "run_id",
+          "status",
+          "progress"
+        ],
+        "title": "StudyRun"
+      },
+      "StudySeriesPoint": {
+        "properties": {
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "benchmark": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark"
+          },
+          "benchmark_drawdown": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark Drawdown"
+          },
+          "navs": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Navs"
+          },
+          "drawdowns": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Drawdowns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session",
+          "benchmark",
+          "benchmark_drawdown",
+          "navs",
+          "drawdowns"
+        ],
+        "title": "StudySeriesPoint"
+      },
+      "StudyVariantResult": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VariantReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "run_id",
+          "status",
+          "report"
+        ],
+        "title": "StudyVariantResult"
       },
       "SystemStatus": {
         "properties": {
@@ -6981,6 +7663,483 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VariantDef": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "overrides": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Overrides"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "config_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Config Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "description",
+          "overrides",
+          "config",
+          "config_warnings"
+        ],
+        "title": "VariantDef"
+      },
+      "VariantReport": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "title": "End"
+          },
+          "total_return": {
+            "type": "number",
+            "title": "Total Return"
+          },
+          "cagr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cagr"
+          },
+          "ann_vol": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ann Vol"
+          },
+          "sharpe": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sharpe"
+          },
+          "sortino": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sortino"
+          },
+          "max_drawdown": {
+            "type": "number",
+            "title": "Max Drawdown"
+          },
+          "max_dd_peak": {
+            "type": "string",
+            "title": "Max Dd Peak"
+          },
+          "max_dd_trough": {
+            "type": "string",
+            "title": "Max Dd Trough"
+          },
+          "max_dd_recovery": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Dd Recovery"
+          },
+          "alpha": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AlphaSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worst_month": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorstMonth"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta"
+          },
+          "correlation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation"
+          },
+          "alpha_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alpha Model"
+          },
+          "avg_turnover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Turnover"
+          },
+          "annualized_turnover": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annualized Turnover"
+          },
+          "total_costs": {
+            "type": "number",
+            "title": "Total Costs"
+          },
+          "slippage_commission": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slippage Commission"
+          },
+          "borrow_fees": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Borrow Fees"
+          },
+          "margin_interest": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Margin Interest"
+          },
+          "min_cash_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Cash Weight"
+          },
+          "cost_drag": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Drag"
+          },
+          "avg_long_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Long Gross"
+          },
+          "avg_short_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Short Gross"
+          },
+          "avg_gross_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Gross Exposure"
+          },
+          "avg_net_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Net Exposure"
+          },
+          "max_gross_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Gross Exposure"
+          },
+          "halves": {
+            "items": {
+              "$ref": "#/components/schemas/PeriodStats"
+            },
+            "type": "array",
+            "title": "Halves"
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarginReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rf_note": {
+            "type": "string",
+            "title": "Rf Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "total_return",
+          "cagr",
+          "ann_vol",
+          "sharpe",
+          "sortino",
+          "max_drawdown",
+          "max_dd_peak",
+          "max_dd_trough",
+          "max_dd_recovery",
+          "worst_month",
+          "beta",
+          "correlation",
+          "alpha_model",
+          "avg_turnover",
+          "annualized_turnover",
+          "total_costs",
+          "slippage_commission",
+          "borrow_fees",
+          "margin_interest",
+          "min_cash_weight",
+          "cost_drag",
+          "avg_long_gross",
+          "avg_short_gross",
+          "avg_gross_exposure",
+          "avg_net_exposure",
+          "max_gross_exposure",
+          "halves",
+          "margin",
+          "rf_note"
+        ],
+        "title": "VariantReport"
+      },
+      "VariantStudy": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "start_date": {
+            "type": "string",
+            "title": "Start Date"
+          },
+          "end_date": {
+            "type": "string",
+            "title": "End Date"
+          },
+          "data_version": {
+            "type": "string",
+            "title": "Data Version"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/StudyRun"
+            },
+            "type": "array",
+            "title": "Runs"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "Complete"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "start_date",
+          "end_date",
+          "data_version",
+          "runs",
+          "complete"
+        ],
+        "title": "VariantStudy"
+      },
+      "VariantsOverview": {
+        "properties": {
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/VariantDef"
+            },
+            "type": "array",
+            "title": "Variants"
+          },
+          "studies": {
+            "items": {
+              "$ref": "#/components/schemas/VariantStudy"
+            },
+            "type": "array",
+            "title": "Studies"
+          },
+          "default_start": {
+            "type": "string",
+            "title": "Default Start"
+          },
+          "default_end": {
+            "type": "string",
+            "title": "Default End"
+          },
+          "paper_default": {
+            "type": "string",
+            "title": "Paper Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variants",
+          "studies",
+          "default_start",
+          "default_end",
+          "paper_default"
+        ],
+        "title": "VariantsOverview"
+      },
+      "WorstMonth": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "month": {
+            "type": "integer",
+            "title": "Month"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "year",
+          "month",
+          "value"
+        ],
+        "title": "WorstMonth"
       }
     }
   }

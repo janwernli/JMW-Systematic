@@ -23,7 +23,7 @@ This is a locally hosted research terminal and **fully automated paper-trading s
 4. [Import data](#4-import-data)
 5. [Start the app and open the dashboard](#5-start-the-app-and-open-the-dashboard)
 6. [Automated paper trading](#6-automated-paper-trading)
-7. [Research: backtests, comparison, alpha test](#7-research-backtests-comparison-alpha-test)
+7. [Research: backtests, comparison, alpha test](#7-research-backtests-comparison-alpha-test) (incl. [strategy variants](#strategy-variants))
 8. [Strategy rules](#8-strategy-rules)
 9. [Execution, accounting and metrics](#9-execution-accounting-and-metrics)
 10. [Limitations](#10-limitations)
@@ -123,6 +123,7 @@ Both bind to localhost only. Stop with **Ctrl+C**.
 | **Universe & Rankings** | Every stock with its composite score, residual momentum, 12–1, FIP, sector, vol, beta, eligibility and long/short book. A stock drawer shows signal inputs and price charts. |
 | **Model Portfolio** | The internal model ledger's positions, drift, sector exposure and concentration. |
 | **Rebalance Desk** | Frozen month-end plans: targets, estimated orders, cash reconciliation, rule checks, and sizing diagnostics (gross, betas, ex-ante vol, sector-neutral nets, hard-to-borrow screen, crash guard). |
+| **Strategy Variants** | The four pre-defined variants side by side on the same period: metrics table, equity and drawdown charts with SPY, margin flags. |
 | **Research Lab** | Backtest settings (composite or plain 12-1), live config warnings, results, exposure, **Factor alpha** tab, monthly heatmap, trades, rebalance log, run comparison. |
 | **Ledger & Diagnostics** | Model ledger orders, fills and cash; audit trail; data quality and ingestion; reproducibility. |
 
@@ -203,9 +204,12 @@ In the **Research Lab**:
 1. Pick **Composite signal** or **Plain 12-1**. Adjust books, sizing, sector neutrality, the hard-to-borrow screen and short-risk parameters.
 2. Click **Run backtest**. Tick 2–4 saved runs to compare them.
 3. Open the **Factor alpha** tab. It regresses the run's monthly returns on the **Fama-French 5 factors (2×3) + momentum**:
-   - **Cash interest.** The dependent variable follows the cash assumption.
-     - By default, backtest cash (including short proceeds) earns **no interest**, so the raw return r is used and RF is **not** subtracted. Subtracting RF would charge the strategy for interest it never received.
-     - With **Cash earns RF** on (`cash_interest`), positive cash is credited the Ken French RF, per calendar day on ACT/360. The regression then uses r − RF.
+   - **Cash interest.** The dependent variable is the return of the positions over the risk-free cost of the capital they tie up.
+     - With **Cash earns RF** on (`cash_interest`), positive cash is credited the Ken French RF, per calendar day on ACT/360. The regression uses **r − RF**.
+     - By default, backtest cash (including short proceeds) earns **no interest**. The regression then uses **r − RF × (1 − idle cash weight)**: RF is charged on every dollar except idle, non-interest-bearing cash.
+       - For the market-neutral book (cash ≈ NAV) this is ≈ r. Subtracting the full RF would charge it for interest it never received.
+       - For a net-long book (SPY core, 130/30; cash ≈ 0) it is ≈ r − RF. Not subtracting RF there would count the risk-free rate as alpha.
+       - A margin loan is already charged RF + spread inside r, so borrowed dollars are charged RF once.
      - The model ledger credits the same interest, so it stays identical to the backtest.
    - Factors come from the Kenneth R. French Data Library, downloaded and cached weekly under `data/factors/`.
    - Results show alpha (monthly × 12), **Newey-West t-stats** (Bartlett kernel, lag = ⌊4·(T/100)^(2/9)⌋), all factor betas and R².
@@ -223,11 +227,76 @@ In the **Research Lab**:
 | Alpha, 1st half / 2nd half | −2.1% (t −1.4) / +8.4% (t 4.7) | −1.7% (t −0.9) / +6.3% (t 3.0) |
 | Momentum-factor loading | 0.34 (t 7) | 0.35 (t 7) |
 
-The alpha is essentially the same whether cash earns RF (regressing r − RF) or not (regressing r): +3.08% vs +3.11% for the composite. That shows the two conventions are consistent.
+The alpha is essentially the same whether cash earns RF (regressing r − RF) or not: +3.08% vs +3.1% for the composite. That shows the two conventions are consistent. With the idle-cash rule the composite's no-interest alpha is +3.17% (t 2.09): the book averaged −3% net, so RF is added back on that small net short.
 
 An earlier version subtracted RF although cash earned nothing, which understated alpha by roughly RF (about 2.4%/yr on average over the sample).
 
 A full-sample t-stat near 2, entirely from the second half, on a survivorship-biased universe, is weak evidence.
+
+### Strategy variants
+
+The **Strategy Variants** page (`/variants`) runs four **pre-defined** variants on the same data version and period and shows them side by side. They are fixed structural alternatives, defined in `backend/app/backtest/variants.py` before being run; nothing is tuned to the backtest. **Neutral 10% stays the paper default** until you explicitly choose another.
+
+| Variant | Definition |
+|---|---|
+| **Neutral 10%** | The current defaults. |
+| **Neutral 15%** | `target_vol` 0.15, `max_side_gross` 1.0, `max_total_gross` 2.0 (Alpaca Reg T limit). |
+| **SPY + overlay** | `core_beta` 1.0: 100% of NAV in SPY, rebalanced monthly with the rest, plus the market-neutral overlay at `target_vol` 0.08. Beta and sector neutrality apply to the overlay only. SPY + long + short gross ≤ 2.0 (the overlay's cap is `max_total_gross − core_beta`). |
+| **130/30** | `sizing` = fixed: long book 130%, short book 30%, same signal, `beta_neutral` off, no vol target, gross cap 1.6. |
+
+The 130/30 variant needs two things that follow from its definition:
+
+- **Sector neutrality is off.** A 100% net-long book cannot keep every sector within ±2% net, because the sector nets sum to +100%.
+- **The per-name long cap is 2.6%** (= 130% ÷ the 50-name minimum book). With the default 2%, a ~60-name book can hold only ~120%.
+
+**Margin loans.** SPY + overlay and 130/30 hold longs worth more than NAV plus short proceeds.
+
+- In the backtest (as at Alpaca under Reg T), the difference is a **margin loan**. The loan is limited to what the targets need (net target − 100%, plus a 1% buffer for slippage and rounding).
+- The loan is charged **RF + an ASSUMED 2.5% spread** per calendar day (ACT/360), set by `margin_debit_spread`.
+- The market-neutral books never borrow.
+
+**Margin checks.** At every close the backtest flags, but never liquidates:
+
+- days when **gross exposure > 2.0× equity**;
+- days when **equity < maintenance requirement**: shorts max(30% of market value, $5/share) + longs 25% of market value.
+
+The flagged days are listed per run.
+
+**Reported for each variant:**
+
+- CAGR, volatility, Sharpe, Sortino;
+- max drawdown with its peak, trough and recovery dates;
+- worst month;
+- beta and correlation to SPY;
+- FF5 + momentum alpha with Newey-West t-stat;
+- one-way turnover per year;
+- total costs (slippage + commissions + borrow fees + margin interest);
+- average long, short and net exposure;
+- the margin checks;
+- a first/second-half split.
+
+Two charts go with the table: equity curves with SPY (log scale), and drawdowns. Sharpe and Sortino use the same excess return as the alpha test (RF charged on all capital except idle cash).
+
+**Results on the current Alpaca data (2017-01-03 → 2026-09-29).** These are illustrations only. The universe is survivorship-biased, which flatters **long** exposure most, so the net-long variants are the most inflated.
+
+| | Neutral 10% | Neutral 15% | SPY + overlay | 130/30 |
+|---|---|---|---|---|
+| CAGR / vol | 4.1% / 8.3% | 5.0% / 10.3% | 19.3% / 19.0% | 23.5% / 21.7% |
+| Sharpe / Sortino | 0.54 / 0.73 | 0.53 / 0.72 | 0.90 / 1.28 | 0.98 / 1.37 |
+| Max drawdown | −14.1% (2019-08 → 2021-07) | −19.1% | −33.4% (Mar 2020) | −35.0% (Mar 2020) |
+| Worst month | −4.4% | −6.4% | −11.1% | −13.8% |
+| Beta / correlation to SPY | 0.00 / 0.01 | 0.02 / 0.03 | 1.00 / 0.94 | 0.97 / 0.80 |
+| Alpha (FF5 + Mom), t | +3.2%, 2.09 | +3.5%, 1.64 | +2.7%, 2.16 | +6.8%, 3.32 |
+| Turnover / total costs | 3.4× / $9,994 | 4.0× / $11,837 | 3.3× / $22,610 | 3.5× / $23,222 |
+| Days gross > 2× / maintenance breaches | 0 / 0 | 0 / 0 | 57 / 0 | 0 / 0 |
+| 1st half: CAGR, alpha (t) | −1.8%, −2.0% (−1.3) | −2.8%, −3.3% (−1.6) | +18.2%, +0.3% (0.2) | +21.4%, +0.8% (0.4) |
+| 2nd half: CAGR, alpha (t) | +10.4%, +8.5% (4.7) | +13.4%, +10.2% (3.3) | +20.3%, +5.6% (3.1) | +25.5%, +11.3% (3.9) |
+
+SPY itself returned about 15% a year over the same period.
+
+- **Every variant's alpha comes from the second half.** None is significant in the first half.
+- **The two net-long variants mostly carry market beta.** Their extra return over the neutral books is mainly SPY's return.
+- **SPY + overlay breached the 2× gross limit on 57 days.** This is drift between the monthly rebalances; the maximum was 2.04×.
 
 ## 8. Strategy rules
 
@@ -352,7 +421,7 @@ npm test              # backend pytest suite + frontend type-check
 npm run test:backend
 ```
 
-There are 155 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
+There are 170 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
 
 - **Composite signal:** winsorizing, the FIP arithmetic, residual momentum rewarding recent idiosyncratic drift but not beta, sector demeaning, and ranking by composite vs 12–1.
 - **Books and sizing:** the hard-to-borrow screen, the sector-neutral QP (limits, gross, beta, caps, and the reduced-gross fallback), the capacity warning, and loading of legacy configs.
@@ -362,6 +431,14 @@ There are 155 backend tests, built on constructed datasets with hand-checkable r
 - **Automation:** opening-auction submission sized from equity, idempotency, dry run, both kill switches, stale-data blocking, stop-loss on actual shorts, flip splitting, the submission-window rules, and the paper-host lock.
 - **Follow-ups:** ACT/360 cash interest, the model ledger matching the backtest with interest on, the alpha regression matching the cash treatment, Norgate GICS sectors (including delisted symbols such as `ENRNQ-200411` all the way into the panel, and legacy names), SEC not being used for Norgate, and final sector nets after the crash guard.
 - **Approval mode:** `approve` is the default (also for existing databases, via migration 0005). Rebalances are held while stop-losses are sent. Approving a plan sends every order and later catch-ups. A changed order list and a second decision are refused. A declined plan is never sent, even in `auto`. Stale drafts are superseded.
+- **Strategy variants:**
+  - The defaults are unchanged, and Neutral 10% stays the paper default. The variant definitions match the spec.
+  - The SPY core is bought first, is exempt from beta and sector neutrality, and counts toward the gross cap; the overlay is identical with and without it.
+  - Fixed 130/30 sizing, including scaling to the gross cap; equal dollar sides without beta neutrality.
+  - Margin loans only when the book needs them (exact cash arithmetic), ACT/360 debit interest, and no borrowing for neutral books.
+  - The margin requirement rules and the engine's gross/maintenance flags.
+  - The idle-cash RF basis, which matches r and r − RF at the extremes; the report's Sharpe, drawdown dates, costs and halves.
+  - End to end: the four variants run through the API on an identical period.
 - **VM operations:** ntfy messages (off without a topic; summary; stale-data, error and approval alerts; never raises), consistent SQLite backups with 14-day rotation while the database is open, the `migrate` and `backup` commands, and the deploy files (localhost-only single-worker unit, weekday New York timers, safe `.env.example` defaults).
 
 ## 14. Git and GitHub
@@ -393,6 +470,15 @@ git add -A && git commit -m "Describe the change" && git push
 | `NORGATE_INDEX` / `NORGATE_HISTORY_START` | `Russell 1000` / `2000-01-01` | Norgate provider |
 | `NTFY_TOPIC` | — (off) | ntfy topic for run summaries and alerts. Use a long random name. |
 | `NTFY_SERVER` / `NTFY_TOKEN` | `https://ntfy.sh` / — | Own ntfy server or access token (optional) |
+
+Strategy parameters that the variants use (StrategyConfig; defaults = Neutral 10%):
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `core_beta` | 0.0 | SPY core, fraction of NAV (0–1); exempt from beta and sector neutrality; counts toward `max_total_gross` |
+| `beta_neutral` | true | Short gross = long gross × β_L / β_S; off = equal dollar gross per side |
+| `sizing` | `vol_target` | `vol_target` or `fixed` (`fixed_long_gross` / `fixed_short_gross`, default 1.30 / 0.30) |
+| `margin_debit_spread` | 0.025 | ASSUMED margin-loan rate over RF, ACT/360 (only books with net target > 100% borrow) |
 
 ## 16. Troubleshooting
 

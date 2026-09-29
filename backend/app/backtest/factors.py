@@ -109,14 +109,24 @@ class RateSource:
         return 0.0
 
 
-def alpha_test(monthly: list[dict], factors: pd.DataFrame, excess: bool = False) -> dict:
+def alpha_test(monthly: list[dict], factors: pd.DataFrame, excess: bool = False,
+               net_exposure: dict[str, float] | None = None) -> dict:
     """monthly: [{'year','month','return'}] strategy returns (decimal).
 
-    excess=True (cash earns RF in the backtest): dependent variable r - RF.
-    excess=False (cash earns nothing): dependent variable r, because subtracting RF would charge the strategy for
-    interest it never received."""
+    The dependent variable is the excess return of the POSITIONS over what the capital would earn at RF:
+      excess=True (cash earns RF in the backtest):    r - RF
+      excess=False (cash earns nothing):              r - RF x x   (net_exposure: {'YYYYMM': average x held
+          during the month}, x = 1 - max(cash / NAV, 0) = the net exposure when cash >= 0; a margin loan is
+          already charged RF + spread inside r); without net_exposure: r.
+    For a market-neutral book (net ~ 0) this is ~r: subtracting the full RF would charge it for interest it
+    never received. For an invested book (SPY core, 130/30: net ~ 1) it is ~r - RF: not subtracting RF would
+    count the risk-free rate as alpha."""
     s = pd.Series({f"{m['year']:04d}{m['month']:02d}": m["return"] for m in monthly}).iloc[1:]  # drop first month
-    df = pd.DataFrame({"r": s}).join(factors, how="inner").dropna()
+    df = pd.DataFrame({"r": s})
+    if net_exposure is not None and not excess:
+        df["net"] = pd.Series(net_exposure)
+        df["net"] = df["net"].fillna(0.0)
+    df = df.join(factors, how="inner").dropna()
     notes = []
     if len(s) and len(df) < len(s):
         notes.append(f"{len(s) - len(df)} strategy month(s) not yet in the factor library (publication lag) were excluded.")
@@ -124,7 +134,12 @@ def alpha_test(monthly: list[dict], factors: pd.DataFrame, excess: bool = False)
     def fit(sub: pd.DataFrame) -> dict | None:
         if len(sub) < 24:
             return None
-        y = (sub["r"] - sub["RF"]).to_numpy() if excess else sub["r"].to_numpy()
+        if excess:
+            y = (sub["r"] - sub["RF"]).to_numpy()
+        elif net_exposure is not None:
+            y = (sub["r"] - sub["RF"] * sub["net"]).to_numpy()
+        else:
+            y = sub["r"].to_numpy()
         X = np.column_stack([np.ones(len(sub))] + [sub[f].to_numpy() for f in FACTORS])
         r = newey_west_ols(y, X)
         return {
@@ -140,9 +155,13 @@ def alpha_test(monthly: list[dict], factors: pd.DataFrame, excess: bool = False)
     return {
         "model": "Fama-French 5 factors (2x3) + momentum; dependent variable = "
                  + ("strategy return - RF (cash earns RF in this backtest)" if excess
+                    else "strategy return - RF x (1 - idle cash weight) (cash earns no interest, so RF is charged only on "
+                         "the capital not sitting in idle cash)" if net_exposure is not None
                     else "strategy return (cash earns no interest in this backtest, so RF is not subtracted)")
                  + "; Newey-West t-stats",
         "excess_returns": excess,
+        "rf_on_net_exposure": net_exposure is not None and not excess,
+        "avg_net_exposure": float(df["net"].mean()) if "net" in df and len(df) else None,
         "source": "Kenneth R. French Data Library (" + ", ".join(FILES.values()) + ")",
         "full": fit(df), "first_half": fit(df.iloc[:half]), "second_half": fit(df.iloc[half:]),
         "notes": notes + (["Each half needs at least 24 months; shorter samples are not estimated."] if half < 24 else []),

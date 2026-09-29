@@ -117,8 +117,12 @@ def execute_rebalance(
     prices: dict[str, float | None],
     fallback_marks: dict[str, float],
     costs: CostModel,
+    max_debit_frac: float = 0.0,
 ) -> RebalanceExecution:
     """Pure function: returns fills and resulting holdings; does not mutate inputs.
+
+    max_debit_frac: buys may take cash down to -max_debit_frac x NAV (a margin loan; Reg T). 0 = fully
+    self-financed (buys limited by cash incl. short proceeds), the default for the market-neutral books.
 
     targets: signed weights of NAV (positive = long, negative = short).
     prices: execution reference price per symbol (the fill session's open for real
@@ -157,6 +161,7 @@ def execute_rebalance(
 
     new_shares = dict(shares)
     cash_now = cash
+    credit = max(max_debit_frac, 0.0) * max(nav, 0.0)   # margin loan available for buys
 
     def missing(s: str, side: str, what: str) -> None:
         unfilled.append({"symbol": s, "side": side, "reason": "no_open_price",
@@ -205,14 +210,15 @@ def execute_rebalance(
 
     def affordable(want: int, fp: float, s: str, what: str) -> int:
         """Largest whole quantity <= want that cash covers; records partial / skipped fills."""
-        if total_cost(want, fp) <= cash_now:
+        avail = cash_now + credit
+        if total_cost(want, fp) <= avail:
             return want
-        q = int(math.floor(max(cash_now - costs.commission_per_order, 0) / (fp * comm_mult)))
-        while q > 0 and total_cost(q, fp) > cash_now:
+        q = int(math.floor(max(avail - costs.commission_per_order, 0) / (fp * comm_mult)))
+        while q > 0 and total_cost(q, fp) > avail:
             q -= 1
         if q <= 0:
             unfilled.append({"symbol": s, "side": "buy", "reason": "insufficient_cash",
-                             "detail": f"Needed {want} shares to {what}; no whole share affordable with ${cash_now:,.2f}."})
+                             "detail": f"Needed {want} shares to {what}; no whole share affordable with ${avail:,.2f}."})
         else:
             unfilled.append({"symbol": s, "side": "buy", "reason": "partial_insufficient_cash",
                              "detail": f"Bought {q} of {want} target shares (cash limit)."})
@@ -462,6 +468,14 @@ def preopen_marks(panel: Panel, t: int, symbols) -> dict[str, float]:
         if j is not None and not np.isnan(panel.mark[t - 1, j]):
             out[s] = float(panel.mark[t - 1, j] / panel.split_ratio[t, j] - panel.dividend[t, j])
     return out
+
+
+def debit_interest(panel: Panel, t: int, cash: float, annual_rate: float) -> float:
+    """Margin interest charged at session t's close on a negative cash balance (a debit / margin loan):
+    |cash| x rate / 360 x calendar days since the previous session (ACT/360). Returned as a positive cost."""
+    if cash >= 0 or annual_rate <= 0:
+        return 0.0
+    return r2(-cash * annual_rate / 360 * accrual_days(panel, t))
 
 
 def cash_interest(panel: Panel, t: int, cash: float, annual_rate: float) -> float:

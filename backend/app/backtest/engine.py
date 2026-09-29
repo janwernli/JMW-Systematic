@@ -6,9 +6,13 @@ Per session t, strictly in this order:
                 (b) execute the pending rebalance formed at the previous session's close
                 at this session's open +/- slippage
   3. CLOSE      close out holdings whose final trading session is t (delisting)
-  4. CLOSE      credit cash interest (optional, RF on positive cash); charge borrow fees on short market
+  4. CLOSE      credit cash interest (optional, RF on positive cash); charge margin interest on a debit
+                (RF + margin_debit_spread; only books with net target > 100% borrow); charge borrow fees on short market
                 value; mark to the close; record NAV
                 (cash + long value + short value, shorts negative)
+  4b. CLOSE     margin checks on the close (flags only, nothing is liquidated): gross exposure
+                (long + |short|) / equity > MARGIN["max_gross"], and equity below the maintenance
+                requirement: shorts max(30% of market value, $5/share), longs 25% of market value
   5. CLOSE      check short stop-losses (fills at the next open)
   6. AFTER CLOSE if t is the last session of its month: compute and freeze signals
                 using data <= t; the resulting target is executed at step 2 of t+1.
@@ -33,6 +37,7 @@ from ..strategy.execution import (
     borrow_fee,
     cash_interest,
     cover_shorts,
+    debit_interest,
     delisting_cashouts,
     execute_rebalance,
     exposures,
@@ -44,6 +49,39 @@ from ..strategy.execution import (
     r2,
 )
 from ..strategy.signals import SignalResult, compute_signals
+
+
+# Margin checks (Reg T / FINRA 4210 style, as Alpaca applies them). Flags only: the backtest never liquidates.
+MARGIN = {
+    "max_gross": 2.0,                 # gross exposure / equity (Alpaca Reg T margin account, 2x)
+    "short_maint_pct": 0.30,          # short maintenance: 30% of short market value ...
+    "short_maint_min_per_share": 5.0,  # ... but at least $5 per share
+    "long_maint_pct": 0.25,           # long maintenance (FINRA 4210 minimum)
+}
+
+
+DEBIT_BUFFER = 0.01   # extra margin loan (fraction of NAV) for slippage and whole-share rounding
+
+
+def max_debit_fraction(targets: dict[str, float]) -> float:
+    """Margin loan the target book needs: longs beyond NAV + short proceeds = net target - 100% (+ buffer).
+    0 for books with net exposure <= 100% - 1% (the market-neutral defaults stay fully self-financed)."""
+    need = sum(targets.values()) - 1.0
+    return need + DEBIT_BUFFER if need > -DEBIT_BUFFER else 0.0
+
+
+def margin_requirement(panel: Panel, t: int, shares: dict[str, int]) -> tuple[float, float]:
+    """(short maintenance requirement, long maintenance requirement) at session t's marks, USD."""
+    short_req = long_req = 0.0
+    for sym, q in shares.items():
+        px = panel.mark[t, panel.sym_index[sym]]
+        if np.isnan(px) or q == 0:
+            continue
+        if q < 0:
+            short_req += max(MARGIN["short_maint_pct"] * -q * px, MARGIN["short_maint_min_per_share"] * -q)
+        else:
+            long_req += MARGIN["long_maint_pct"] * q * px
+    return short_req, long_req
 
 
 @dataclass
@@ -85,6 +123,7 @@ class BacktestResult:
     start_session: str
     end_session: str
     stops: list[StopEvent] = field(default_factory=list)
+    margin_flags: list[dict] = field(default_factory=list)   # one entry per session with a breach
 
     @property
     def fills(self) -> list[tuple[str, Fill]]:
@@ -136,6 +175,8 @@ def run_backtest(
     pending_stops: list[StopEvent] = []
     stopped_since_signal: set[str] = set()
     rows = []
+    margin_flags: list[dict] = []
+    rf_missing_warned = False
     bench_last = np.nan
 
     def record_fills(before: dict[str, int], fills: list[Fill]) -> None:
@@ -176,10 +217,12 @@ def run_backtest(
 
         # 2b. open: execute pending rebalance
         if pending is not None and pending.fill_session == s:
-            symbols = set(shares) | set(pending.signals.target_weights())
+            targets = pending.signals.target_weights()
+            symbols = set(shares) | set(targets)
             ex = execute_rebalance(
-                shares, cash, pending.signals.target_weights(), list(pending.signals.selected["symbol"]),
+                shares, cash, targets, list(pending.signals.selected["symbol"]),
                 open_prices(panel, t, symbols), preopen_marks(panel, t, symbols), costs,
+                max_debit_frac=max_debit_fraction(targets),
             )
             record_fills(shares, ex.fills)
             shares, cash = ex.shares_after, ex.cash_after
@@ -209,6 +252,17 @@ def run_backtest(
             if interest:
                 cash = r2(cash + interest)
                 cash_events.append((s, CashEvent("interest", "", interest, f"RF {rate:.2%}/yr on cash (ACT/360)")))
+        if cash < 0 and k > 0:
+            base = rf.annual(s) if rf is not None else 0.0
+            if rf is None and not rf_missing_warned:
+                warnings.append("Margin loan interest charged at the spread only: no RF source was supplied.")
+                rf_missing_warned = True
+            debit = debit_interest(panel, t, cash, base + cfg.margin_debit_spread)
+            if debit:
+                cash = r2(cash - debit)
+                cum_costs += debit
+                cash_events.append((s, CashEvent("margin_interest", "", -debit,
+                                                 f"margin loan {base + cfg.margin_debit_spread:.2%}/yr (ACT/360)")))
         fee, _ = borrow_fee(panel, t, shares, cfg.borrow_fee_annual)
         if fee:
             cash = r2(cash - fee)
@@ -220,8 +274,19 @@ def run_backtest(
         if bj is not None:
             v = panel.tr[t, bj]
             bench_last = v if not np.isnan(v) else bench_last
+        short_req, long_req = margin_requirement(panel, t, shares)
+        gross_x = (long_v - short_v) / nav if nav > 0 else float("inf")
+        breaches = []
+        if gross_x > MARGIN["max_gross"] + 1e-9:
+            breaches.append("gross")
+        if nav < short_req + long_req:
+            breaches.append("maintenance")
+        if breaches:
+            margin_flags.append({"session": s, "breaches": breaches, "gross_exposure": gross_x, "equity": nav,
+                                 "short_requirement": r2(short_req), "long_requirement": r2(long_req)})
         rows.append({
             "session": s, "nav": nav, "gross_nav": r2(nav + cum_costs), "cash": cash,
+            "gross_exposure": gross_x, "margin_requirement": r2(short_req + long_req),
             "positions_value": pos_value, "long_value": long_v, "short_value": short_v,
             "benchmark_nav": (cfg.initial_capital * bench_last / panel.tr[t0, bj]) if bj is not None else None,
             "positions": len(shares), "stale_marks": stale_n,
@@ -260,4 +325,4 @@ def run_backtest(
 
     nav_df = pd.DataFrame(rows).set_index("session")
     return BacktestResult(cfg, nav_df, rebalances, cash_events, warnings, bsym if bj is not None else None,
-                          panel.sessions[t0], panel.sessions[t_end], stops + pending_stops)
+                          panel.sessions[t0], panel.sessions[t_end], stops + pending_stops, margin_flags)

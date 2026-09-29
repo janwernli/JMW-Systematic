@@ -153,8 +153,15 @@ def run_alpha(run_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
     except Exception as e:  # noqa: BLE001
         raise HTTPException(503, f"Could not load Ken French factor data: {e}") from e
     cfg = StrategyConfig.model_validate_json(_get(ctx, run_id)["config_json"])
+    held = None
+    if not cfg.cash_interest:   # RF is charged on the capital not sitting in idle cash (see backtest/compare.py)
+        from ...backtest.compare import rf_exposure
+
+        nav = pd.DataFrame(ctx.db.query("SELECT session, nav, cash FROM backtest_nav WHERE run_id=? ORDER BY session",
+                                        (run_id,))).set_index("session")
+        held = rf_exposure(nav, False).shift(1).dropna().groupby(lambda d: d[:4] + d[5:7]).mean().to_dict()
     return alpha_test([{"year": m["year"], "month": m["month"], "return": m["strategy"]} for m in months], factors,
-                      excess=cfg.cash_interest)
+                      excess=cfg.cash_interest, net_exposure=held)
 
 
 @router.get("/runs/{run_id}/rebalances", response_model=list[RunRebalance])

@@ -26,6 +26,11 @@ Steps (documented in the UI and README):
      Alpaca's easy-to-borrow flag at order time).
   6. Crash guard: if the benchmark's trailing 24-month total return < 0 AND its 6-month realized vol
      > `crash_market_vol_threshold`, the short book is multiplied by `crash_short_scale`.
+  7. Variants: `beta_neutral=False` sizes both sides with equal dollar gross (vol target unchanged);
+     `sizing="fixed"` uses `fixed_long_gross` / `fixed_short_gross` (e.g. 130/30) instead of the vol
+     target; `core_beta` > 0 adds a benchmark (SPY) core of core_beta x NAV that is exempt from beta and
+     sector neutrality. Steps 1-6 then describe the overlay, whose total gross is capped at
+     max_total_gross - core_beta.
 """
 
 from __future__ import annotations
@@ -177,34 +182,56 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     capL_tot = len(longs) * cfg.max_long_weight
     capS_tot = len(shorts) * cfg.max_short_weight
 
-    GL = GS = (cfg.min_side_gross + cfg.max_side_gross) / 2
-    for _ in range(4):
-        wL = waterfill(rawL, min(GL, capL_tot), cfg.max_long_weight)
-        wS = waterfill(rawS, min(GS, capS_tot), cfg.max_short_weight)
-        betaL = float(wL @ bL_i / wL.sum())
-        betaS = float(wS @ bS_i / wS.sum())
-        ratio = betaL / betaS if betaS > 0 else 1.0
-        unit = RL @ (wL / wL.sum()) - ratio * (RS @ (wS / wS.sum()))
-        sig_unit = float(np.std(unit, ddof=1) * math.sqrt(252)) if len(unit) > 2 else float("nan")
-        g_star = cfg.target_vol / sig_unit if sig_unit and sig_unit > 0 else cfg.min_side_gross
-        hi = min(cfg.max_side_gross, cfg.max_side_gross / ratio, cfg.max_total_gross / (1 + ratio),
-                 capL_tot, capS_tot / ratio)
-        lo = max(cfg.min_side_gross, cfg.min_side_gross / ratio)
-        feasible = lo <= hi
-        # Minimum gross is relaxed only when it conflicts with caps/neutrality; the vol target stays a ceiling.
-        GL = min(max(g_star, lo), hi) if feasible else min(g_star, hi)
-        GS = ratio * GL
-
-    wL = waterfill(rawL, GL, cfg.max_long_weight)
-    wS = waterfill(rawS, GS, cfg.max_short_weight)
+    overlay_cap = cfg.max_total_gross - cfg.core_beta   # the SPY core counts toward the total gross cap
     binding = []
-    if not feasible:
-        binding.append("minimum side gross relaxed to keep beta neutrality within per-name caps / gross limits")
-        diag["notes"].append(binding[-1])
-    if abs(GL - hi) < 1e-9 and g_star > hi:
-        binding.append("vol target capped by gross / per-name capacity")
-    if feasible and abs(GL - lo) < 1e-9 and g_star < lo:
-        binding.append("vol target below minimum gross (minimum applied)")
+
+    def side_betas(wL: np.ndarray, wS: np.ndarray) -> tuple[float, float, float]:
+        bl = float(wL @ bL_i / wL.sum())
+        bs = float(wS @ bS_i / wS.sum())
+        return bl, bs, (bl / bs if cfg.beta_neutral and bs > 0 else 1.0)
+
+    def unit_vol(wL: np.ndarray, wS: np.ndarray, ratio: float) -> float:
+        unit = RL @ (wL / wL.sum()) - ratio * (RS @ (wS / wS.sum()))
+        return float(np.std(unit, ddof=1) * math.sqrt(252)) if len(unit) > 2 else float("nan")
+
+    if cfg.sizing == "fixed":
+        GL, GS = min(cfg.fixed_long_gross, capL_tot), min(cfg.fixed_short_gross, capS_tot)
+        if GL < cfg.fixed_long_gross - 1e-12 or GS < cfg.fixed_short_gross - 1e-12:
+            binding.append("fixed gross limited by per-name cap capacity")
+        if GL + GS > overlay_cap + 1e-12:
+            scale = overlay_cap / (GL + GS)
+            GL, GS = GL * scale, GS * scale
+            binding.append(f"fixed books scaled x{scale:.3f} to the total gross cap")
+        wL = waterfill(rawL, GL, cfg.max_long_weight)
+        wS = waterfill(rawS, GS, cfg.max_short_weight)
+        betaL, betaS, ratio = side_betas(wL, wS)
+        sig_unit = unit_vol(wL, wS, ratio)
+        g_star, lo, hi, feasible = None, GL, GL, True
+    else:
+        GL = GS = (cfg.min_side_gross + cfg.max_side_gross) / 2
+        for _ in range(4):
+            wL = waterfill(rawL, min(GL, capL_tot), cfg.max_long_weight)
+            wS = waterfill(rawS, min(GS, capS_tot), cfg.max_short_weight)
+            betaL, betaS, ratio = side_betas(wL, wS)
+            sig_unit = unit_vol(wL, wS, ratio)
+            g_star = cfg.target_vol / sig_unit if sig_unit and sig_unit > 0 else cfg.min_side_gross
+            hi = min(cfg.max_side_gross, cfg.max_side_gross / ratio, overlay_cap / (1 + ratio),
+                     capL_tot, capS_tot / ratio)
+            lo = max(cfg.min_side_gross, cfg.min_side_gross / ratio)
+            feasible = lo <= hi
+            # Minimum gross is relaxed only when it conflicts with caps/neutrality; the vol target stays a ceiling.
+            GL = min(max(g_star, lo), hi) if feasible else min(g_star, hi)
+            GS = ratio * GL
+
+        wL = waterfill(rawL, GL, cfg.max_long_weight)
+        wS = waterfill(rawS, GS, cfg.max_short_weight)
+        if not feasible:
+            binding.append("minimum side gross relaxed to keep beta neutrality within per-name caps / gross limits")
+            diag["notes"].append(binding[-1])
+        if abs(GL - hi) < 1e-9 and g_star > hi:
+            binding.append("vol target capped by gross / per-name capacity")
+        if feasible and abs(GL - lo) < 1e-9 and g_star < lo:
+            binding.append("vol target below minimum gross (minimum applied)")
 
     # ---- crash guard -------------------------------------------------------------------------------
     crash = {"enabled": cfg.crash_guard, "active": False, "market_return": None, "market_vol": None}
@@ -248,6 +275,19 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     sector_info["final_max_abs_net"] = max((abs(v) for v in classified.values()), default=None)
 
     weights = {s: float(w) for s, w in zip(longs, wL)} | {s: -float(w) for s, w in zip(shorts, wS)}
+
+    # ---- SPY core (outside the neutral overlay) ------------------------------------------------------
+    core = {"symbol": None, "weight": 0.0, "requested": cfg.core_beta}
+    if cfg.core_beta > 0:
+        csym = cfg.benchmark_symbol or panel.benchmark
+        crow = table.index[table["symbol"] == csym]
+        if bench_col is None or len(crow) == 0 or np.isnan(panel.close[t, bench_col]):
+            diag["notes"].append(f"SPY core requested ({cfg.core_beta:.0%}) but benchmark '{csym}' has no bar: core omitted.")
+        else:
+            table.loc[crow, "selected"] = True
+            table.loc[crow, "target_weight"] = cfg.core_beta
+            table.loc[crow, "side"] = "core"
+            core.update(symbol=csym, weight=cfg.core_beta)
     port = RL @ wL - RS @ wS
     net_beta = float(wL @ bL_i - wS @ bS_i)
     sel_idx = table.index[table["symbol"].isin(weights)]
@@ -259,6 +299,9 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
         beta_long=betaL, beta_short=betaS, beta_ratio=ratio, ex_ante_net_beta=net_beta,
         unit_vol=sig_unit, vol_target=cfg.target_vol, ex_ante_vol=float(np.std(port, ddof=1) * math.sqrt(252)),
         gross_bounds=[cfg.min_side_gross, cfg.max_side_gross], total_gross_cap=cfg.max_total_gross,
+        overlay_gross_cap=overlay_cap, sizing=cfg.sizing, beta_neutral=cfg.beta_neutral, core=core,
+        total_gross=float(wL.sum() + wS.sum() + core["weight"]),
+        total_net_exposure=float(wL.sum() - wS.sum() + core["weight"]),
         cap_capacity=[capL_tot, capS_tot], binding=binding, crash_guard=crash, sector_neutrality=sector_info,
         max_long_weight=float(wL.max()), max_short_weight=float(wS.max()),
     )

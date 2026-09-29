@@ -694,6 +694,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/variants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Overview */
+        get: operations["overview_api_research_variants_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/variants/studies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Launch
+         * @description Queue one backtest per variant on the same data version and period (no parameter search).
+         */
+        post: operations["launch_api_research_variants_studies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/research/variants/studies/{study_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Result */
+        get: operations["result_api_research_variants_studies__study_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -712,6 +766,23 @@ export interface components {
             stopped_explanation: string;
             /** Pending Plan Id */
             pending_plan_id: number | null;
+        };
+        /** AlphaSummary */
+        AlphaSummary: {
+            /** Alpha Annual */
+            alpha_annual: number;
+            /** T Alpha */
+            t_alpha: number;
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Months */
+            months: number;
+            /** Beta Mkt */
+            beta_mkt?: number | null;
+            /** Beta Mom */
+            beta_mom?: number | null;
         };
         /** AutomationRun */
         AutomationRun: {
@@ -1166,6 +1237,48 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** MarginFlag */
+        MarginFlag: {
+            /** Session */
+            session: string;
+            /** Breaches */
+            breaches: string[];
+            /** Gross Exposure */
+            gross_exposure: number;
+            /** Equity */
+            equity: number;
+            /** Short Requirement */
+            short_requirement: number;
+            /** Long Requirement */
+            long_requirement: number;
+        };
+        /** MarginReport */
+        MarginReport: {
+            /** Limits */
+            limits: {
+                [key: string]: number;
+            };
+            /** Gross Breach Days */
+            gross_breach_days: number;
+            /** Maintenance Breach Days */
+            maintenance_breach_days: number;
+            /** First Gross Breach */
+            first_gross_breach: string | null;
+            /** First Maintenance Breach */
+            first_maintenance_breach: string | null;
+            /** Max Gross Exposure */
+            max_gross_exposure: number | null;
+            /** Max Gross Session */
+            max_gross_session: string | null;
+            /** Min Equity To Requirement */
+            min_equity_to_requirement: number | null;
+            /** Min Equity To Requirement Session */
+            min_equity_to_requirement_session: string | null;
+            /** Flagged Days */
+            flagged_days: components["schemas"]["MarginFlag"][];
+            /** Flagged Days Truncated */
+            flagged_days_truncated: boolean;
+        };
         /** MarketClock */
         MarketClock: {
             /** Now Utc */
@@ -1313,6 +1426,32 @@ export interface components {
             config?: components["schemas"]["StrategyConfig"] | null;
             /** Name */
             name?: string | null;
+        };
+        /** PeriodStats */
+        PeriodStats: {
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Total Return */
+            total_return: number;
+            /** Cagr */
+            cagr: number | null;
+            /** Ann Vol */
+            ann_vol: number | null;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Sortino */
+            sortino: number | null;
+            /** Max Drawdown */
+            max_drawdown: number;
+            /** Max Dd Peak */
+            max_dd_peak: string;
+            /** Max Dd Trough */
+            max_dd_trough: string;
+            /** Max Dd Recovery */
+            max_dd_recovery: string | null;
+            alpha?: components["schemas"]["AlphaSummary"] | null;
         };
         /** PlanDecisionRequest */
         PlanDecisionRequest: {
@@ -2147,6 +2286,43 @@ export interface components {
              */
             max_short_weight: number;
             /**
+             * Beta Neutral
+             * @description Size the short book so the overlay is beta-neutral (short gross = long gross x beta_L / beta_S); off = equal dollar gross per side under vol targeting
+             * @default true
+             */
+            beta_neutral: boolean;
+            /**
+             * Sizing
+             * @description vol_target: gross set by target_vol within the side limits; fixed: fixed_long_gross / fixed_short_gross (e.g. 130/30), no vol target
+             * @default vol_target
+             * @enum {string}
+             */
+            sizing: "vol_target" | "fixed";
+            /**
+             * Fixed Long Gross
+             * @description Long book gross when sizing = fixed, fraction of NAV
+             * @default 1.3
+             */
+            fixed_long_gross: number;
+            /**
+             * Fixed Short Gross
+             * @description Short book gross when sizing = fixed, fraction of NAV
+             * @default 0.3
+             */
+            fixed_short_gross: number;
+            /**
+             * Core Beta
+             * @description SPY core: hold core_beta x NAV in the benchmark ETF under the long/short overlay. Rebalanced monthly; exempt from beta/sector neutrality; counts toward max_total_gross
+             * @default 0
+             */
+            core_beta: number;
+            /**
+             * Margin Debit Spread
+             * @description ASSUMED margin-loan rate over RF (Ken French), per year, ACT/360. Only books whose longs exceed NAV + short proceeds (SPY core + overlay, 130/30) borrow
+             * @default 0.025
+             */
+            margin_debit_spread: number;
+            /**
              * Sector Neutral
              * @description Constrain net exposure per sector
              * @default true
@@ -2233,6 +2409,67 @@ export interface components {
              * @description Benchmark; default = the provider's SPY
              */
             benchmark_symbol?: string | null;
+        };
+        /** StudyRequest */
+        StudyRequest: {
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+        };
+        /** StudyResult */
+        StudyResult: {
+            study: components["schemas"]["VariantStudy"];
+            /** Results */
+            results: components["schemas"]["StudyVariantResult"][];
+            /** Series */
+            series: components["schemas"]["StudySeriesPoint"][];
+            /** Notes */
+            notes: string[];
+        };
+        /** StudyRun */
+        StudyRun: {
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Run Id */
+            run_id: number;
+            /** Status */
+            status: string;
+            /** Progress */
+            progress: number;
+            /** Error */
+            error?: string | null;
+        };
+        /** StudySeriesPoint */
+        StudySeriesPoint: {
+            /** Session */
+            session: string;
+            /** Benchmark */
+            benchmark: number | null;
+            /** Benchmark Drawdown */
+            benchmark_drawdown: number | null;
+            /** Navs */
+            navs: {
+                [key: string]: number | null;
+            };
+            /** Drawdowns */
+            drawdowns: {
+                [key: string]: number | null;
+            };
+        };
+        /** StudyVariantResult */
+        StudyVariantResult: {
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Run Id */
+            run_id: number;
+            /** Status */
+            status: string;
+            report: components["schemas"]["VariantReport"] | null;
         };
         /** SystemStatus */
         SystemStatus: {
@@ -2382,6 +2619,125 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VariantDef */
+        VariantDef: {
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Overrides */
+            overrides: {
+                [key: string]: unknown;
+            };
+            config: components["schemas"]["StrategyConfig"];
+            /** Config Warnings */
+            config_warnings: string[];
+        };
+        /** VariantReport */
+        VariantReport: {
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Total Return */
+            total_return: number;
+            /** Cagr */
+            cagr: number | null;
+            /** Ann Vol */
+            ann_vol: number | null;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Sortino */
+            sortino: number | null;
+            /** Max Drawdown */
+            max_drawdown: number;
+            /** Max Dd Peak */
+            max_dd_peak: string;
+            /** Max Dd Trough */
+            max_dd_trough: string;
+            /** Max Dd Recovery */
+            max_dd_recovery: string | null;
+            alpha?: components["schemas"]["AlphaSummary"] | null;
+            worst_month: components["schemas"]["WorstMonth"] | null;
+            /** Beta */
+            beta: number | null;
+            /** Correlation */
+            correlation: number | null;
+            /** Alpha Model */
+            alpha_model: string | null;
+            /** Avg Turnover */
+            avg_turnover: number | null;
+            /** Annualized Turnover */
+            annualized_turnover: number | null;
+            /** Total Costs */
+            total_costs: number;
+            /** Slippage Commission */
+            slippage_commission: number | null;
+            /** Borrow Fees */
+            borrow_fees: number | null;
+            /** Margin Interest */
+            margin_interest: number | null;
+            /** Min Cash Weight */
+            min_cash_weight: number | null;
+            /** Cost Drag */
+            cost_drag: number | null;
+            /** Avg Long Gross */
+            avg_long_gross: number | null;
+            /** Avg Short Gross */
+            avg_short_gross: number | null;
+            /** Avg Gross Exposure */
+            avg_gross_exposure: number | null;
+            /** Avg Net Exposure */
+            avg_net_exposure: number | null;
+            /** Max Gross Exposure */
+            max_gross_exposure: number | null;
+            /** Halves */
+            halves: components["schemas"]["PeriodStats"][];
+            margin: components["schemas"]["MarginReport"] | null;
+            /** Rf Note */
+            rf_note: string;
+        };
+        /** VariantStudy */
+        VariantStudy: {
+            /** Id */
+            id: number;
+            /** Created At */
+            created_at: string;
+            /** Start Date */
+            start_date: string;
+            /** End Date */
+            end_date: string;
+            /** Data Version */
+            data_version: string;
+            /** Runs */
+            runs: components["schemas"]["StudyRun"][];
+            /** Complete */
+            complete: boolean;
+        };
+        /** VariantsOverview */
+        VariantsOverview: {
+            /** Variants */
+            variants: components["schemas"]["VariantDef"][];
+            /** Studies */
+            studies: components["schemas"]["VariantStudy"][];
+            /** Default Start */
+            default_start: string;
+            /** Default End */
+            default_end: string;
+            /** Paper Default */
+            paper_default: string;
+        };
+        /** WorstMonth */
+        WorstMonth: {
+            /** Year */
+            year: number;
+            /** Month */
+            month: number;
+            /** Value */
+            value: number;
         };
     };
     responses: never;
@@ -3541,6 +3897,90 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    overview_api_research_variants_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariantsOverview"];
+                };
+            };
+        };
+    };
+    launch_api_research_variants_studies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VariantStudy"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    result_api_research_variants_studies__study_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                study_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyResult"];
                 };
             };
             /** @description Validation Error */

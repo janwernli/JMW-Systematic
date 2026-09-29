@@ -45,11 +45,13 @@ class SignalResult:
 
     @property
     def selected(self) -> pd.DataFrame:
-        """Targets in execution priority: longs by rank (best first), then shorts (worst first)."""
+        """Targets in execution priority: the SPY core (if any), longs by rank (best first), then shorts (worst first)."""
         sel = self.table[self.table["selected"]]
-        longs = sel[sel["target_weight"] > 0].sort_values("rank")
-        shorts = sel[sel["target_weight"] < 0].sort_values("rank", ascending=False)
-        return pd.concat([longs, shorts])
+        core = sel[sel["side"] == "core"]
+        rest = sel[sel["side"] != "core"]
+        longs = rest[rest["target_weight"] > 0].sort_values("rank")
+        shorts = rest[rest["target_weight"] < 0].sort_values("rank", ascending=False)
+        return pd.concat([core, longs, shorts])
 
     def target_weights(self) -> dict[str, float]:
         """Signed target weights (fraction of NAV): positive = long, negative = short."""

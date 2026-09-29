@@ -231,3 +231,29 @@ export function useAutomationMutations() {
     }),
   };
 }
+
+// ---------------------------------------------------------------- strategy variants
+export const useVariants = () =>
+  useQuery({
+    queryKey: ["variants"],
+    queryFn: () => api.get<S["VariantsOverview"]>("/research/variants"),
+    refetchInterval: (q) => (q.state.data?.studies.some((s) => !s.complete) ? 1500 : false),
+  });
+
+export const useVariantStudy = (id: number | null) =>
+  useQuery({
+    queryKey: ["variantStudy", id],
+    queryFn: () => api.get<S["StudyResult"]>(`/research/variants/studies/${id}`),
+    enabled: id != null,
+    refetchInterval: (q) => (q.state.data && !q.state.data.study.complete ? 1500 : false),
+  });
+
+export function useLaunchVariantStudy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { start_date?: string | null; end_date?: string | null }) =>
+      api.post<S["VariantStudy"]>("/research/variants/studies", body),
+    onError,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["variants"] }),
+  });
+}

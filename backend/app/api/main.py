@@ -19,7 +19,7 @@ from ..data.provider import ProviderError
 from ..ledger.paper import LedgerError
 from ..logging_setup import configure_logging
 from ..services import AppContext
-from .routes import broker, ledger, portfolio, rebalance, research, system, universe
+from .routes import broker, ledger, portfolio, rebalance, research, system, universe, variants
 
 log = logging.getLogger("app.api")
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
@@ -87,7 +87,7 @@ def create_app(settings: Settings | None = None, ctx: AppContext | None = None) 
                                                       "message": f"{type(exc).__name__}: {exc}"})
 
     for r in (system.router, universe.router, portfolio.router, rebalance.router, research.router, ledger.router,
-              broker.router):
+              broker.router, variants.router):
         app.include_router(r, prefix="/api")
 
     # Serve the production frontend build (npm run build) from the same localhost origin.

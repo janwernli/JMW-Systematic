@@ -18,7 +18,7 @@ from ..data.provider import ProviderInfo
 from ..db import Database, log_event, utcnow
 from ..ledger.paper import store_config, store_signal_set
 from ..strategy.config import StrategyConfig
-from .engine import BacktestResult, run_backtest
+from .engine import MARGIN, BacktestResult, run_backtest
 from .metrics import compute_metrics
 
 log = logging.getLogger(__name__)
@@ -102,6 +102,26 @@ def assumptions(cfg: StrategyConfig, info: ProviderInfo, benchmark: str | None) 
     ]
 
 
+def margin_summary(res: BacktestResult, keep: int = 100) -> dict:
+    """Days on which the book breached the 2x gross limit or the maintenance requirement (see engine.MARGIN)."""
+    nav = res.nav
+    flags = res.margin_flags
+    gross = nav["gross_exposure"].replace([float("inf")], float("nan")) if "gross_exposure" in nav else None
+    cushion = (nav["nav"] / nav["margin_requirement"]).where(nav["margin_requirement"] > 0)         if "margin_requirement" in nav else None
+    by_kind = {k: [f["session"] for f in flags if k in f["breaches"]] for k in ("gross", "maintenance")}
+    return {
+        "limits": dict(MARGIN),
+        "gross_breach_days": len(by_kind["gross"]), "maintenance_breach_days": len(by_kind["maintenance"]),
+        "first_gross_breach": by_kind["gross"][0] if by_kind["gross"] else None,
+        "first_maintenance_breach": by_kind["maintenance"][0] if by_kind["maintenance"] else None,
+        "max_gross_exposure": None if gross is None or gross.isna().all() else float(gross.max()),
+        "max_gross_session": None if gross is None or gross.isna().all() else str(gross.idxmax()),
+        "min_equity_to_requirement": None if cushion is None or cushion.isna().all() else float(cushion.min()),
+        "min_equity_to_requirement_session": None if cushion is None or cushion.isna().all() else str(cushion.idxmin()),
+        "flagged_days": flags[:keep], "flagged_days_truncated": len(flags) > keep,
+    }
+
+
 def create_run(db: Database, cfg: StrategyConfig, info: ProviderInfo, data_version: str, name: str | None) -> int:
     with db.transaction() as conn:
         cfg_id = store_config(conn, cfg)
@@ -132,10 +152,15 @@ def execute_run(db: Database, run_id: int, panel: Panel, calendar: TradingCalend
 
     try:
         rf = None
-        if cfg.cash_interest:
+        borrows = cfg.core_beta > 0 or (cfg.sizing == "fixed" and cfg.fixed_long_gross > cfg.fixed_short_gross)
+        if cfg.cash_interest or borrows:
             from .factors import RateSource, load_factors
 
-            rf = RateSource(load_factors(REPO_ROOT / "data" / "factors"))
+            try:
+                rf = RateSource(load_factors(REPO_ROOT / "data" / "factors"))
+            except Exception:  # noqa: BLE001
+                if cfg.cash_interest:
+                    raise   # interest on cash needs RF; margin interest falls back to the spread (warned)
         res = run_backtest(panel, calendar, cfg, progress, rf=rf)
         if rf is not None and rf.carried:
             res.warnings.append(f"RF not yet published for {', '.join(sorted(rf.carried))}; latest month carried forward.")
@@ -160,8 +185,11 @@ def persist_result(db: Database, run_id: int, res: BacktestResult, info: Provide
                                                  if e.kind == "dividend" and e.amount < 0))
     metrics["stop_losses"] = len(res.stops)
     metrics["cash_interest"] = float(sum(e.amount for _, e in res.cash_events if e.kind == "interest"))
+    metrics["margin_interest"] = float(-sum(e.amount for _, e in res.cash_events if e.kind == "margin_interest"))
+    metrics["min_cash_weight"] = float((nav["cash"] / nav["nav"]).min())
     metrics["crash_guard_months"] = sum(1 for r in res.rebalances
                                         if r.signals.diagnostics.get("crash_guard", {}).get("active"))
+    metrics["margin"] = margin_summary(res)
     metrics["benchmark_symbol"] = res.benchmark_symbol
     metrics["benchmark_return_basis"] = info.benchmark_return_basis if res.benchmark_symbol else None
     repro = {

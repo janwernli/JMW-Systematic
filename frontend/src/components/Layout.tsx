@@ -6,6 +6,7 @@ import {
   IconAdjustmentsHorizontal,
   IconArrowsExchange,
   IconBook2,
+  IconChartLine,
   IconFlask,
   IconLayoutDashboard,
   IconListNumbers,
@@ -22,6 +23,7 @@ const NAV = [
   { to: "/portfolio", label: "Model Portfolio", icon: IconWallet },
   { to: "/rebalance", label: "Rebalance Desk", icon: IconArrowsExchange },
   { to: "/research", label: "Research Lab", icon: IconFlask },
+  { to: "/variants", label: "Strategy Variants", icon: IconChartLine },
   { to: "/ledger", label: "Ledger & Diagnostics", icon: IconBook2 },
 ];
 

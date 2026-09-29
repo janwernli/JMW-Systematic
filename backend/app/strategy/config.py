@@ -73,6 +73,20 @@ class StrategyConfig(BaseModel):
     max_total_gross: float = Field(1.50, gt=0, le=4, description="Cap on long + short gross, fraction of NAV")
     max_long_weight: float = Field(0.02, gt=0, le=1, description="Per-name cap on longs, fraction of NAV")
     max_short_weight: float = Field(0.015, gt=0, le=1, description="Per-name cap on shorts, fraction of NAV")
+    beta_neutral: bool = Field(
+        True, description="Size the short book so the overlay is beta-neutral (short gross = long gross x beta_L / beta_S); "
+                          "off = equal dollar gross per side under vol targeting")
+    sizing: Literal["vol_target", "fixed"] = Field(
+        "vol_target", description="vol_target: gross set by target_vol within the side limits; fixed: fixed_long_gross / "
+                                  "fixed_short_gross (e.g. 130/30), no vol target")
+    fixed_long_gross: float = Field(1.30, ge=0, le=3, description="Long book gross when sizing = fixed, fraction of NAV")
+    fixed_short_gross: float = Field(0.30, ge=0, le=3, description="Short book gross when sizing = fixed, fraction of NAV")
+    core_beta: float = Field(
+        0.0, ge=0, le=1, description="SPY core: hold core_beta x NAV in the benchmark ETF under the long/short overlay. "
+                                     "Rebalanced monthly; exempt from beta/sector neutrality; counts toward max_total_gross")
+    margin_debit_spread: float = Field(
+        0.025, ge=0, le=0.5, description="ASSUMED margin-loan rate over RF (Ken French), per year, ACT/360. Only books "
+                                         "whose longs exceed NAV + short proceeds (SPY core + overlay, 130/30) borrow")
     sector_neutral: bool = Field(True, description="Constrain net exposure per sector")
     max_sector_net: float = Field(0.02, ge=0, le=1, description="Max |long - short| weight per sector, fraction of NAV")
 
@@ -124,6 +138,8 @@ class StrategyConfig(BaseModel):
             raise ValueError("buffer_exit_pct must be at least long_pct / short_pct")
         if self.signal == "composite" and self.w_residual + self.w_sector_demeaned + self.w_fip <= 0:
             raise ValueError("composite weights must not all be zero")
+        if self.core_beta >= self.max_total_gross:
+            raise ValueError("core_beta must be below max_total_gross (the SPY core counts toward the gross cap)")
         for msg in self.config_warnings():
             warnings.warn(msg, ConfigWarning, stacklevel=2)
         return self
@@ -131,6 +147,19 @@ class StrategyConfig(BaseModel):
     def config_warnings(self) -> list[str]:
         """Valid-but-self-limiting settings, surfaced in the UI, plan checks and backtest warnings."""
         out = []
+        if self.sizing == "fixed":
+            for side, gross, cap in (("long", self.fixed_long_gross, self.max_long_weight),
+                                     ("short", self.fixed_short_gross, self.max_short_weight)):
+                if self.min_names_per_side * cap < gross - 1e-12:
+                    out.append(f"Per-name {side} cap limits the fixed {side} book: {self.min_names_per_side} x {cap:.2%} = "
+                               f"{self.min_names_per_side * cap:.1%} < {gross:.0%} unless more names qualify.")
+            if self.core_beta + self.fixed_long_gross + self.fixed_short_gross > self.max_total_gross + 1e-12:
+                out.append(f"Fixed books ({self.fixed_long_gross:.0%}/{self.fixed_short_gross:.0%}) plus core exceed "
+                           f"max_total_gross {self.max_total_gross:.0%}; both sides are scaled down.")
+            if self.sector_neutral and abs(self.fixed_long_gross - self.fixed_short_gross) > self.max_sector_net:
+                out.append("Sector neutrality cannot hold for a net-long fixed book (sector nets sum to the book's net "
+                           "exposure); the sector QP will cut gross heavily or fail. Turn sector_neutral off.")
+            return out
         cap_s = self.min_names_per_side * self.max_short_weight
         if cap_s < self.max_side_gross - 1e-12:
             out.append(
