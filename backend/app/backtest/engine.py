@@ -217,7 +217,7 @@ def run_backtest(
 
         # 5. short stop-loss checks on the close (fill at the next open)
         queued = {e.symbol for e in pending_stops}
-        stop = cfg.short_stop_loss if cfg.is_long_short else None
+        stop = cfg.short_stop_loss
         for trig in short_stop_triggers(panel, t, shares, basis, stop):
             if trig["symbol"] not in queued:
                 pending_stops.append(StopEvent(s, None, trig["symbol"], trig["entry"], trig["close"]))

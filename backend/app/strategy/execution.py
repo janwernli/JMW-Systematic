@@ -310,8 +310,18 @@ def short_stop_triggers(panel: Panel, t: int, shares: dict[str, int], basis: dic
     return out
 
 
+def accrual_days(panel: Panel, t: int) -> int:
+    """Calendar days since the previous session (weekends/holidays accrue on the next session)."""
+    from datetime import date
+
+    if t <= 0:
+        return 1
+    return (date.fromisoformat(panel.sessions[t]) - date.fromisoformat(panel.sessions[t - 1])).days
+
+
 def borrow_fee(panel: Panel, t: int, shares: dict[str, int], annual_rate: float) -> tuple[float, float]:
-    """Daily borrow fee on short market value at the close: |short value| × annual_rate / 252."""
+    """Borrow fee accrued at session t's close: |short value| × annual_rate / 360 × calendar days since the
+    previous session (ACT/360, as securities-lending fees are quoted)."""
     parts = []
     for s, q in shares.items():
         if q < 0:
@@ -319,7 +329,7 @@ def borrow_fee(panel: Panel, t: int, shares: dict[str, int], annual_rate: float)
             if not np.isnan(px):
                 parts.append(-q * px)
     short_value = math.fsum(parts)
-    return r2(short_value * annual_rate / 252), short_value
+    return r2(short_value * annual_rate / 360 * accrual_days(panel, t)), short_value
 
 
 def exposures(panel: Panel, t: int, shares: dict[str, int]) -> tuple[float, float]:

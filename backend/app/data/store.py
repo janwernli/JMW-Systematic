@@ -52,6 +52,7 @@ def run_import(
         symbols = [i.symbol for i in instruments]
         bars = provider.fetch_bars(symbols, start, end)
         actions = provider.fetch_corporate_actions(symbols, start, end)
+        membership = provider.index_membership(symbols)
 
         # ---- validation -------------------------------------------------------------------
         if not bars.empty:
@@ -78,6 +79,14 @@ def run_import(
             ids = _upsert_instruments(conn, info.key, instruments, import_id)
             n_bars = _upsert_bars(conn, ids, bars, import_id)
             n_act = _upsert_actions(conn, ids, actions, import_id)
+            if membership is not None and not membership.empty:
+                conn.execute("DELETE FROM universe_membership WHERE instrument_id IN "
+                             "(SELECT id FROM instruments WHERE provider=?)", (info.key,))
+                conn.executemany(
+                    "INSERT OR REPLACE INTO universe_membership (instrument_id, index_name, start_session, end_session,"
+                    " import_id) VALUES (?,?,?,?,?)",
+                    [(ids[m.symbol], m.index_name, m.start, m.end if isinstance(m.end, str) else None, import_id)
+                     for m in membership.itertuples(index=False) if m.symbol in ids])
             cov_start = bars["session"].min() if not bars.empty else None
             cov_end = bars["session"].max() if not bars.empty else None
             status = "succeeded" if not missing_syms or len(missing_syms) < len(symbols) else "failed"
@@ -116,8 +125,9 @@ def _upsert_instruments(conn, provider: str, records, import_id: int) -> dict[st
             " is_benchmark, list_date, delist_date, active, metadata_json, import_id, updated_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(provider, symbol) DO UPDATE SET name=excluded.name, exchange=excluded.exchange,"
-            " asset_type=excluded.asset_type, asset_type_source=excluded.asset_type_source, sector=excluded.sector,"
-            " sector_source=excluded.sector_source, is_benchmark=excluded.is_benchmark,"
+            " asset_type=excluded.asset_type, asset_type_source=excluded.asset_type_source,"
+            " sector=COALESCE(excluded.sector, instruments.sector),"
+            " sector_source=COALESCE(excluded.sector_source, instruments.sector_source), is_benchmark=excluded.is_benchmark,"
             " list_date=COALESCE(instruments.list_date, excluded.list_date), delist_date=excluded.delist_date,"
             " active=excluded.active, metadata_json=excluded.metadata_json, import_id=excluded.import_id,"
             " updated_at=excluded.updated_at",
@@ -167,6 +177,12 @@ def _upsert_actions(conn, ids: dict[str, int], actions: pd.DataFrame, import_id:
 # ---------------------------------------------------------------------------------------------
 # Reading
 # ---------------------------------------------------------------------------------------------
+def load_membership(db: Database, provider: str) -> pd.DataFrame:
+    return pd.read_sql_query(
+        "SELECT i.symbol, m.index_name, m.start_session AS start, m.end_session AS end FROM universe_membership m"
+        " JOIN instruments i ON i.id=m.instrument_id WHERE i.provider=?", db.conn, params=(provider,))
+
+
 def load_frames(db: Database, provider: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     conn = db.conn
     inst = pd.read_sql_query(
@@ -234,8 +250,9 @@ def get_panel(db: Database, provider: str, calendar: TradingCalendar, benchmark:
             return _panel_cache[key]
         inst, bars, acts = load_frames(db, provider)
         if bars.empty:
-            raise ProviderError(f"No market data stored for provider '{provider}'. Load the demo or import data first.")
-        panel = build_panel(bars, acts, inst, calendar, benchmark)
+            raise ProviderError(f"No market data stored for provider '{provider}'. Run `npm run import-data` first.")
+        membership = load_membership(db, provider)
+        panel = build_panel(bars, acts, inst, calendar, benchmark, membership=membership if not membership.empty else None)
         _panel_cache.clear()
         _panel_cache[key] = panel
         return panel
@@ -264,7 +281,7 @@ def quality_report(db: Database, provider: MarketDataProvider, calendar: Trading
             "warnings": [{"level": "error", "message": "No market data stored yet."}],
         }
     hi = stats["hi"]
-    # Demo data is a fixed snapshot: staleness is judged against its own end date.
+    # Fixed test fixtures are judged against their own end date; live providers against the exchange calendar.
     expected = hi if info.is_demo else calendar.latest_completed_session(now)
     lag = 0
     if expected and hi < expected:
@@ -303,8 +320,6 @@ def quality_report(db: Database, provider: MarketDataProvider, calendar: Trading
         warnings.append({"level": "info", "message": f"{len(stale_symbols)} active symbols have no bar on {hi}."})
     if not info.point_in_time_universe:
         warnings.append({"level": "error", "message": "SURVIVORSHIP BIAS: " + info.survivorship_note})
-    if info.is_demo:
-        warnings.append({"level": "info", "message": "DEMO DATA: synthetic prices; not real securities or performance."})
     if last_import and last_import["status"] == "failed":
         warnings.append({"level": "error", "message": f"Latest import #{last_import['id']} failed: {last_import['error']}"})
     for w in json.loads(last_ok["warnings_json"]) if last_ok else []:

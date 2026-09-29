@@ -23,7 +23,7 @@ def _headline(m: dict | None) -> dict | None:
             "gross_total_return": m["gross"]["total_return"], "ann_vol": m["net"]["ann_vol"],
             "max_drawdown": m["net"]["max_drawdown"], "benchmark_total_return": b.get("total_return"),
             "return_difference": m.get("return_difference"), "avg_turnover": m.get("avg_turnover"),
-            "mode": m.get("mode", "long_only"), "realized_beta": m.get("realized_beta"),
+            "signal": m.get("signal", "momentum_12_1"), "realized_beta": m.get("realized_beta"),
             "avg_gross_exposure": m.get("avg_gross_exposure"),
             "start": m["start_session"], "end": m["end_session"]}
 
@@ -52,7 +52,8 @@ def defaults(ctx: AppContext = Depends(get_ctx)):
     panel = ctx.panel()
     prov = ctx.require_provider()
     cfg = StrategyConfig()
-    return {"data_label": ctx.data_label(), "config": cfg, "earliest_start": earliest_start(panel, cfg),
+    return {"data_label": ctx.data_label(), "config": cfg, "config_warnings": cfg.config_warnings(),
+            "earliest_start": earliest_start(panel, cfg),
             "latest_end": panel.sessions[-1], "benchmark_symbol": panel.benchmark,
             "survivorship_warning": None if prov.info.point_in_time_universe else prov.info.survivorship_note}
 
@@ -138,6 +139,20 @@ def run_trades(run_id: int, limit: int = Query(200, le=5000), offset: int = 0, s
     rows = ctx.db.query(f"SELECT * FROM backtest_fills WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
                         (*params, limit, offset))
     return {"total": total, "limit": limit, "offset": offset, "rows": rows}
+
+
+@router.get("/runs/{run_id}/alpha")
+def run_alpha(run_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Fama-French 5 + momentum regression of the run's monthly excess returns (Newey-West t-stats)."""
+    from ...backtest.factors import alpha_test, load_factors
+    from ...config import REPO_ROOT
+
+    months = run_monthly(run_id, ctx)
+    try:
+        factors = load_factors(REPO_ROOT / "data" / "factors")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(503, f"Could not load Ken French factor data: {e}") from e
+    return alpha_test([{"year": m["year"], "month": m["month"], "return": m["strategy"]} for m in months], factors)
 
 
 @router.get("/runs/{run_id}/rebalances", response_model=list[RunRebalance])

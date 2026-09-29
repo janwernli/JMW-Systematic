@@ -78,12 +78,17 @@ def store_signal_set(conn: sqlite3.Connection, sig: SignalResult, context: str, 
     tab = sig.table
     conn.executemany(
         "INSERT INTO signal_rows (set_id, symbol, close_raw, adv20, session_t21, session_t252, tr_t21, tr_t252,"
-        " valid_history, momentum, eligible, reason, rank, selected, target_weight, side, percentile, vol, beta)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        " valid_history, momentum, eligible, reason, rank, selected, target_weight, side, percentile, vol, beta,"
+        " adv60, sector, resid_mom, sector_mom, fip, composite, score)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [(set_id, r.symbol, r.close_raw, r.adv20, r.session_t21, r.session_t252, r.tr_t21, r.tr_t252,
           r.valid_history, r.momentum, int(r.eligible), r.reason, _int_or_none(r.rank), int(r.selected),
           float(r.target_weight), r.side if isinstance(r.side, str) else None, _float_or_none(r.percentile),
-          _float_or_none(r.vol), _float_or_none(r.beta)) for r in tab.itertuples(index=False)],
+          _float_or_none(r.vol), _float_or_none(r.beta), _float_or_none(getattr(r, "adv60", None)),
+          getattr(r, "sector", None) if isinstance(getattr(r, "sector", None), str) else None,
+          _float_or_none(getattr(r, "resid_mom", None)), _float_or_none(getattr(r, "sector_mom", None)),
+          _float_or_none(getattr(r, "fip", None)), _float_or_none(getattr(r, "composite", None)),
+          _float_or_none(getattr(r, "score", None))) for r in tab.itertuples(index=False)],
     )
     return set_id
 
@@ -112,7 +117,7 @@ class AdvanceResult:
 
 class PaperLedger:
     def __init__(self, db: Database, calendar: TradingCalendar, provider_key: str,
-                 panel_fn: Callable[[], Panel], data_version_fn: Callable[[], str], is_demo: bool):
+                 panel_fn: Callable[[], Panel], data_version_fn: Callable[[], str], is_demo: bool = False):
         self.db = db
         self.cal = calendar
         self.provider = provider_key
@@ -156,7 +161,7 @@ class PaperLedger:
             cur = conn.execute(
                 "INSERT INTO paper_portfolios (name, provider, status, initial_capital, cash, inception_session,"
                 " as_of_session, config_id, created_at, notes) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (name or ("Demo virtual portfolio" if self.is_demo else "Virtual portfolio"), self.provider, "active",
+                (name or "Model portfolio", self.provider, "active",
                  cap, cap, inception, inception, cfg_id, utcnow(),
                  "INTERNAL PAPER SIMULATION - no broker connection"))
             pid = cur.lastrowid
@@ -257,7 +262,7 @@ class PaperLedger:
                 if auto_apply and plan["fill_session"] <= target:
                     self.apply_plan(plan["id"])
                     with self.db.transaction() as conn:
-                        log_event(conn, "info", "rebalance", f"Plan #{plan['id']} auto-applied (demo seed)", portfolio_id=pid)
+                        log_event(conn, "info", "rebalance", f"Plan #{plan['id']} auto-applied (automation)", portfolio_id=pid)
                 else:
                     stopped = "decision_required"
                     break
@@ -347,7 +352,7 @@ class PaperLedger:
                          (s, cash, cum_costs, pid))
 
             # 5. short stop-loss checks on the close (automatic cover at the next open)
-            if cfg.is_long_short:
+            if True:  # short stop-losses
                 pending = {r["symbol"] for r in conn.execute(
                     "SELECT symbol FROM paper_orders WHERE portfolio_id=? AND origin='stop_loss' AND status='pending'", (pid,))}
                 nxt = self.cal.next_session(s)
@@ -508,7 +513,7 @@ class PaperLedger:
             {"rule": "All targets eligible", "ok": bool(sig.selected["eligible"].all()) if sig.selected_count else True,
              "detail": "Every target passes price, liquidity and history filters at the signal session."},
         ]
-        if cfg.is_long_short:
+        if True:
             gl, gs = sum(longs.values()), -sum(shorts.values())
             close = dict(zip(sig.table["symbol"], sig.table["close_raw"]))
             checks += [
@@ -537,15 +542,6 @@ class PaperLedger:
                 {"rule": "Cash stays positive", "ok": est.cash_after >= 0,
                  "detail": f"Estimated cash after trading ${est.cash_after:,.2f} (short proceeds held as cash)."},
             ]
-        else:
-            checks += [
-                {"rule": "Long-only, no leverage", "ok": est.cash_after >= 0 and all(q >= 0 for q in est.shares_after.values()),
-                 "detail": f"Estimated residual cash ${est.cash_after:,.2f}; no short positions."},
-                {"rule": "Selection count", "ok": sig.selected_count <= cfg.top_n,
-                 "detail": f"{sig.selected_count} selected of {sig.eligible_count} eligible (limit {cfg.top_n})."},
-                {"rule": "Weights sum to at most 100%", "ok": sum(targets.values()) <= 1 + 1e-9,
-                 "detail": f"Sum of target weights {sum(targets.values()):.4f}."},
-            ]
         status = "blocked" if sig.blocked_reason else "proposed"
         estimate = {
             "nav": nav, "cash_before": est.cash_before, "est_buy_value": est.buy_value, "est_sell_value": est.sell_value,
@@ -554,7 +550,7 @@ class PaperLedger:
             "price_basis": f"Signal-session close ({s}); actual fills use the {fill} open.",
             "universe_count": sig.universe_count, "eligible_count": sig.eligible_count,
             "selected_count": sig.selected_count, "coverage": sig.coverage, "unfilled_estimate": est.unfilled,
-            "mode": cfg.mode, "long_count": len(longs), "short_count": len(shorts),
+            "signal": cfg.signal, "long_count": len(longs), "short_count": len(shorts),
             "long_gross": sum(longs.values()), "short_gross": -sum(shorts.values()),
             "stopped_shorts_excluded": sorted(stopped), "diagnostics": d,
         }

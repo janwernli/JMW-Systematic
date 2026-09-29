@@ -41,10 +41,10 @@ class InstrumentRecord:
 
 @dataclass(frozen=True)
 class ProviderInfo:
-    key: str                      # "demo" | "alpaca"
+    key: str                      # "alpaca" | "norgate" | "fixture" (tests)
     name: str
-    feed: str                     # e.g. "synthetic-fixture", "iex", "sip"
-    data_label: str               # "Demo Data" | "Delayed Market Data"
+    feed: str                     # e.g. "sip", "iex", "norgate-eod"
+    data_label: str               # "Delayed Market Data" | "End-of-Day Market Data"
     is_demo: bool
     benchmark_symbol: str
     benchmark_return_basis: str   # "total_return" | "price_return"
@@ -85,6 +85,13 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def default_history_range(self) -> tuple[str, str]:
         """(start, end) ISO dates to request for a full refresh."""
+
+    def index_membership(self, symbols: list[str]) -> pd.DataFrame | None:
+        """Optional point-in-time index membership: columns symbol, index_name, start, end (end None = current).
+
+        Providers without historical membership return None; the universe is then everything imported
+        (and flagged as survivorship-biased unless `info.point_in_time_universe`)."""
+        return None
 
 
 def empty_bars() -> pd.DataFrame:

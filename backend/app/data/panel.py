@@ -50,6 +50,7 @@ class Panel:
     sym_index: dict[str, int] = field(default_factory=dict)
     delist_idx: np.ndarray | None = None   # session index of last trading day, -1 if not delisted
     list_idx: np.ndarray | None = None     # session index of first bar, len(sessions) if none
+    membership: np.ndarray | None = None   # bool (T, N): point-in-time index membership; None = not provided
 
     def __post_init__(self) -> None:
         self.sess_index = {s: i for i, s in enumerate(self.sessions)}
@@ -73,6 +74,7 @@ def build_panel(
     calendar: TradingCalendar,
     benchmark: str | None,
     end: str | None = None,
+    membership: pd.DataFrame | None = None,
 ) -> Panel:
     """bars: symbol, session, open, high, low, close, volume (raw).
     actions: symbol, ex_date, action_type, ratio, amount.
@@ -169,8 +171,20 @@ def build_panel(
         elif isinstance(dd, str) and dd < sessions[0]:
             delist_idx[j] = -2  # delisted before the panel starts
 
+    member = None
+    if membership is not None and not membership.empty:
+        # rows: symbol, start (first session in the index), end (last session, None = still a member)
+        member = np.zeros((T, N), dtype=bool)
+        for sym, start, stop in membership[["symbol", "start", "end"]].itertuples(index=False):
+            j = sym_index.get(sym)
+            if j is None:
+                continue
+            lo = int(np.searchsorted(np.array(sessions), start))
+            hi = int(np.searchsorted(np.array(sessions), stop, side="right")) if isinstance(stop, str) else T
+            member[lo:hi, j] = True
+
     return Panel(
         sessions=sessions, symbols=symbols, open=opn, high=high, low=low, close=close, volume=vol,
         split_ratio=split, dividend=div, tr=tr, mark=mark, stale=stale, valid_count=valid_count,
-        instruments=inst, benchmark=benchmark, delist_idx=delist_idx, list_idx=list_idx,
+        instruments=inst, benchmark=benchmark, delist_idx=delist_idx, list_idx=list_idx, membership=member,
     )

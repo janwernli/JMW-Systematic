@@ -38,9 +38,9 @@ class Settings(BaseSettings):
     log_format: Literal["json", "text"] = Field(default="json", alias="LOG_FORMAT")
 
     # Market data
-    market_data_provider: Literal["demo", "alpaca"] = Field(
-        default="demo", alias="MARKET_DATA_PROVIDER"
-    )
+    market_data_provider: Literal["alpaca", "norgate"] = Field(default="alpaca", alias="MARKET_DATA_PROVIDER")
+    norgate_index: str = Field(default="Russell 1000", alias="NORGATE_INDEX")
+    norgate_history_start: str = Field(default="2000-01-01", alias="NORGATE_HISTORY_START")
     alpaca_api_key_id: SecretStr | None = Field(default=None, alias="ALPACA_API_KEY_ID")
     alpaca_api_secret_key: SecretStr | None = Field(default=None, alias="ALPACA_API_SECRET_KEY")
     alpaca_data_feed: Literal["iex", "sip"] = Field(default="sip", alias="ALPACA_DATA_FEED")
@@ -56,8 +56,12 @@ class Settings(BaseSettings):
     alpaca_history_start: str = Field(default="2016-01-01", alias="ALPACA_HISTORY_START")
     alpaca_max_symbols: int = Field(default=600, alias="ALPACA_MAX_SYMBOLS")
 
-    # Demo bootstrap
-    demo_autoseed: bool = Field(default=True, alias="DEMO_AUTOSEED")
+    # SEC EDGAR (sector SIC codes): descriptive User-Agent with contact e-mail is required by the SEC
+    sec_user_agent: str = Field(default="", alias="SEC_USER_AGENT")
+
+    # Alpaca PAPER trading automation (orders go to the paper account only)
+    broker_trading_enabled: bool = Field(default=False, alias="BROKER_TRADING_ENABLED")
+    broker_paper_url: str = Field(default="https://paper-api.alpaca.markets", alias="ALPACA_PAPER_TRADING_URL")
 
     @field_validator("database_path", "alpaca_universe_file", mode="after")
     @classmethod

@@ -232,19 +232,3 @@ def paper_config(ctx: AppContext = Depends(get_ctx)):
 def paper_config_update(cfg: StrategyConfig, ctx: AppContext = Depends(get_ctx)):
     ctx.ledger.update_config(cfg)
     return paper_config(ctx)
-
-
-@router.post("/paper/seed-demo")
-def reseed_demo(ctx: AppContext = Depends(get_ctx)) -> dict:
-    """Recreate the demo portfolio (archiving the current one). Demo mode only."""
-    prov = ctx.require_provider()
-    if not prov.info.is_demo:
-        return {"ok": False, "message": "Only available in demo mode."}
-    if ctx.ledger.active():
-        ctx.ledger.reset()
-    from ...services import DEMO_PAPER_INCEPTION, DEMO_PAPER_SEED_UNTIL
-    ctx.ledger.initialize(StrategyConfig(), inception_session=DEMO_PAPER_INCEPTION, name="Demo virtual portfolio")
-    ctx.ledger.advance(until=DEMO_PAPER_SEED_UNTIL, auto_apply=True)
-    with ctx.db.transaction() as conn:
-        log_event(conn, "info", "paper", "Demo portfolio re-seeded by user")
-    return {"ok": True, "message": "Demo virtual portfolio re-created."}

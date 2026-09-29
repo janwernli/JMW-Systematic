@@ -110,7 +110,8 @@ def test_frozen_universe_skips_reselection_and_bar_end_is_after_bar_stamp():
 
     p = make(handler)
     inst = p.list_instruments(["AAA", "OLD"])
-    assert [i.symbol for i in inst] == ["AAA", "OLD", "SPY"]
+    from app.data.alpaca_provider import SECTOR_ETFS
+    assert [i.symbol for i in inst] == ["AAA", "OLD", "SPY"] + SECTOR_ETFS   # reference series always included
     assert seen == ["/v2/assets"]  # no dollar-volume re-selection requests
     assert "Frozen" in inst[0].metadata["selection"]
     p.fetch_bars(["AAA"], "2024-01-01", "2024-03-28")

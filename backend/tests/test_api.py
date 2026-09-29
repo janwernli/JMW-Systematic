@@ -1,127 +1,124 @@
-"""End-to-end API flow on the seeded DEMO data set (FastAPI TestClient, temp database)."""
+"""End-to-end API flow on a realistic fixture with a simulated Alpaca paper broker (FastAPI TestClient)."""
 
 import time
 
+import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.main import create_app
+from app.backtest import factors as factors_mod
 from app.backtest.engine import run_backtest
 from app.config import Settings
+from app.data.store import run_import
+from app.services import AppContext
 from app.strategy.config import StrategyConfig
+
+from .helpers import rich_fixture
+from .test_automation import FakeBroker
 
 
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
+    cal, prov, series, sectors = rich_fixture()
     db = tmp_path_factory.mktemp("api") / "api.db"
-    settings = Settings(_env_file=None, DATABASE_PATH=str(db), MARKET_DATA_PROVIDER="demo", DEMO_AUTOSEED="true",
-                        LOG_FORMAT="text", LOG_LEVEL="WARNING")
-    with TestClient(create_app(settings)) as c:
+    settings = Settings(_env_file=None, DATABASE_PATH=str(db), LOG_FORMAT="text", LOG_LEVEL="WARNING", SEC_USER_AGENT="")
+    ctx = AppContext(settings, calendar=cal, provider=prov, broker=FakeBroker())
+    run_import(ctx.db, prov, cal)
+    with TestClient(create_app(settings, ctx=ctx)) as c:
+        c.cal = cal
         yield c
 
 
-def test_status_and_quality_are_labelled_demo(client):
-    s = client.get("/api/status").json()
-    assert s["mode"] == "demo" and s["data_label"] == "Demo Data"
-    assert s["data_end"] == "2026-09-25" and s["has_portfolio"]
-    q = client.get("/api/data/quality").json()
-    assert q["has_data"] and not q["is_stale"] and q["eligible_count"] > 50
-    assert any("DEMO" in w["message"] for w in q["warnings"])
-
-
-def test_seeded_portfolio_waits_for_august_decision(client):
-    cc = client.get("/api/portfolio/summary").json()
-    assert cc["data_label"] == "Paper Simulation"
-    assert cc["valuation_session"] == "2026-08-31"
-    assert cc["nav"] == pytest.approx(cc["cash"] + cc["invested"], abs=0.02)
-    plan = client.get("/api/rebalance/current").json()
-    assert plan["status"] == "proposed" and plan["signal_session"] == "2026-08-31"
-    assert plan["fill_session"] == "2026-09-01" and plan["can_apply"]
-    assert all(c["ok"] for c in plan["checks"])
-    adv = client.post("/api/paper/advance", json={}).json()
-    assert adv["stopped_reason"] == "decision_required" and adv["processed_count"] == 0
-
-
-def test_apply_once_then_advance_to_latest(client):
-    plan = client.get("/api/rebalance/current").json()
-    r = client.post(f"/api/rebalance/plans/{plan['id']}/apply")
-    assert r.status_code == 200 and r.json()["status"] == "applied"
-    dup = client.post(f"/api/rebalance/plans/{plan['id']}/apply")
-    assert dup.status_code == 409
-    adv = client.post("/api/paper/advance", json={}).json()
-    assert adv["as_of"] == "2026-09-25" and adv["stopped_reason"] == "no_newer_data"
-    done = client.get(f"/api/rebalance/plans/{plan['id']}").json()
-    assert done["status"] == "executed" and done["fills"]
-    assert {f["session"] for f in done["fills"]} == {"2026-09-01"}
-    pos = client.get("/api/portfolio/positions").json()
-    assert pos["valuation_session"] == "2026-09-25" and 0 < len(pos["rows"]) <= 200
-    # long-short default: signed weights (shorts negative) plus cash still sum to NAV
-    assert any(r["shares"] < 0 for r in pos["rows"]) and any(r["shares"] > 0 for r in pos["rows"])
-    assert sum(r["weight"] for r in pos["rows"]) + pos["cash_weight"] == pytest.approx(1.0, abs=1e-6)
-
-
-def test_universe_and_stock_detail(client):
-    u = client.get("/api/universe").json()
-    longs = [r for r in u["rows"] if r["selected"] and r["model_weight"] > 0]
-    shorts = [r for r in u["rows"] if r["selected"] and r["model_weight"] < 0]
-    assert u["signal_session"] == "2026-09-25" and u["selected_count"] == len(longs) + len(shorts)
-    assert 50 <= len(longs) <= 100 and 50 <= len(shorts) <= 100
-    assert max(r["rank"] for r in longs) < min(r["rank"] for r in shorts)   # winners long, losers short
-    assert all(r["close_raw"] > 10 for r in shorts)                         # short price floor
-    top = next(r for r in u["rows"] if r["rank"] == 1)
-    d = client.get(f"/api/universe/{top['symbol']}").json()
-    sig = d["signal"]
-    assert sig["momentum"] == pytest.approx(sig["tr_t21"] / sig["tr_t252"] - 1)
-    assert d["prices"][-1]["session"] == "2026-09-25"
-    assert client.get("/api/universe/NOPE").status_code == 404
-
-
-def test_backtest_launch_and_results(client):
-    cfg = StrategyConfig(top_n=20, start_date="2019-01-02", end_date="2024-12-31").model_dump()
-    run = client.post("/api/research/runs", json={"config": cfg, "name": "t"}).json()
-    for _ in range(100):
-        r = client.get(f"/api/research/runs/{run['id']}").json()
+def wait_run(client, run_id):
+    for _ in range(300):
+        r = client.get(f"/api/research/runs/{run_id}").json()
         if r["status"] in ("completed", "failed"):
+            return r
+        time.sleep(0.1)
+    raise AssertionError("run did not finish")
+
+
+def test_status_and_quality(client):
+    s = client.get("/api/status").json()
+    assert s["mode"] == "live" and s["data_end"]
+    q = client.get("/api/data/quality").json()
+    assert q["has_data"] and q["eligible_count"] > 20
+    d = client.get("/api/research/defaults").json()
+    assert d["config"]["signal"] == "composite" and d["config"]["max_short_weight"] == 0.015
+    assert d["config_warnings"] == []
+
+
+def test_model_portfolio_plan_and_universe(client):
+    cal = client.cal
+    inception = cal.month_end_sessions("2021-06-01", "2021-12-31")[-1]
+    r = client.post("/api/paper/init", json={"inception_session": inception, "config": {"min_adv_usd": 1e6}})
+    assert r.status_code == 200, r.text
+    plan = client.get("/api/rebalance/current").json()
+    assert plan["status"] == "proposed" and plan["signal_session"] == inception
+    rules = {c["rule"]: c for c in plan["checks"]}
+    assert rules["Beta-neutral (ex-ante)"]["ok"] and rules["Gross exposure within cap"]["ok"]
+    sn = plan["estimate"]["diagnostics"]["sector_neutrality"]
+    assert sn["enabled"] and (sn["max_abs_net"] is None or sn["max_abs_net"] <= 0.02 + 1e-6 or not sn["applied"])
+    assert client.post(f"/api/rebalance/plans/{plan['id']}/apply").status_code == 200
+    adv = client.post("/api/paper/advance", json={"max_sessions": 5}).json()
+    assert adv["processed_count"] == 5
+    u = client.get("/api/universe").json()
+    el = [r for r in u["rows"] if r["eligible"]]
+    assert all(r["composite"] is not None for r in el) and all(r["sector"] for r in el)
+    longs = [r for r in el if r["side"] == "long"]
+    shorts = [r for r in el if r["side"] == "short"]
+    assert longs and shorts and max(r["rank"] for r in longs) < min(r["rank"] for r in shorts)
+
+
+def test_backtest_alpha_and_plain_12_1_comparison(client, monkeypatch):
+    idx = [f"{y}{m:02d}" for y in range(2018, 2024) for m in range(1, 13)]
+    rng = np.random.default_rng(0)
+    fac = pd.DataFrame(rng.normal(0, 0.03, (len(idx), 6)), index=idx, columns=factors_mod.FACTORS)
+    fac["RF"] = 0.001
+    monkeypatch.setattr(factors_mod, "load_factors", lambda *a, **k: fac)
+    runs = [client.post("/api/research/runs", json={"config": {"min_adv_usd": 1e6, "signal": sig}}).json()["id"]
+            for sig in ("composite", "momentum_12_1")]
+    done = [wait_run(client, i) for i in runs]
+    assert all(r["status"] == "completed" for r in done), [r["error"] for r in done]
+    assert done[0]["config"]["signal"] == "composite" and done[1]["config"]["signal"] == "momentum_12_1"
+    alpha = client.get(f"/api/research/runs/{runs[0]}/alpha").json()
+    assert alpha["full"]["months"] >= 24 and "t_alpha" in alpha["full"] and set(alpha["full"]["betas"]) == set(factors_mod.FACTORS)
+    if alpha["full"]["months"] >= 48:
+        assert alpha["first_half"] is not None and alpha["second_half"] is not None
+    else:  # each half needs >= 24 months; shorter halves are reported as not estimable
+        assert alpha["first_half"] is None and any("24 months" in n for n in alpha["notes"])
+
+
+def test_broker_overview_and_automation_controls(client):
+    assert client.put("/api/automation/enabled", json={"enabled": False}).json()["automation_enabled"] is False
+    r = client.post("/api/automation/run", json={"dry_run": True}).json()
+    assert r["started"]
+    for _ in range(300):
+        runs = client.get("/api/automation/runs").json()
+        if runs and runs[0]["status"] != "running":
             break
         time.sleep(0.1)
-    assert r["status"] == "completed", r.get("error")
-    assert r["metrics"]["cagr_meaningful"] and r["repro"]["deterministic"]
-    series = client.get(f"/api/research/runs/{run['id']}/series").json()
-    assert series[0]["session"] >= "2019-01-02" and series[-1]["session"] <= "2024-12-31"
-    monthly = client.get(f"/api/research/runs/{run['id']}/monthly").json()
-    assert len(monthly) == 72
-    trades = client.get(f"/api/research/runs/{run['id']}/trades?limit=5").json()
-    assert trades["total"] > 0 and len(trades["rows"]) == 5
-    # identical inputs -> identical results
-    run2 = client.post("/api/research/runs", json={"config": cfg}).json()
-    for _ in range(100):
-        r2 = client.get(f"/api/research/runs/{run2['id']}").json()
-        if r2["status"] == "completed":
-            break
-        time.sleep(0.1)
-    assert r2["metrics"] == r["metrics"]
+    assert runs[0]["dry_run"] and runs[0]["trigger"] == "manual"
+    ov = client.get("/api/broker/overview").json()
+    assert ov["connected"] and ov["account"]["equity"] == 100_000 and ov["automation_enabled"] is False
+    assert ov["trading_enabled_env"] is False
+    assert client.get("/api/broker/orders").json()["total"] >= 0
 
 
-def test_bad_backtest_config_is_rejected_with_message(client):
-    r = client.post("/api/research/runs", json={"config": {"top_n": 0}})
-    assert r.status_code == 422 and "top_n" in r.json()["message"]
+def test_bad_config_is_rejected_with_message(client):
+    r = client.post("/api/research/runs", json={"config": {"min_names_per_side": 0}})
+    assert r.status_code == 422 and "min_names_per_side" in r.json()["message"]
 
 
-def test_ledger_and_reproducibility(client):
-    assert client.get("/api/ledger/fills").json()["total"] > 0
-    cash = client.get("/api/ledger/cash?limit=2000").json()
-    assert any(r["kind"] == "initial_deposit" for r in cash["rows"])
-    assert client.get("/api/ledger/events").json()["total"] > 0
-    rep = client.get("/api/ledger/reproducibility").json()
-    assert rep["data_version"].startswith("demo-2026-09-25")
-
-
-def test_demo_paper_ledger_equals_backtest(client):
-    """The seeded paper portfolio (inception 2025-12-31, plans auto-applied) must match a backtest exactly."""
+def test_model_ledger_equals_backtest(client):
+    """The model ledger (plans applied) must equal a backtest over the same window, to the cent."""
     ctx = client.app.state.ctx
-    pid = ctx.ledger.active()["id"]
-    paper = {r["session"]: r["nav"] for r in ctx.db.query(
-        "SELECT session, nav FROM paper_nav WHERE portfolio_id=? AND session<='2026-08-31' ORDER BY session", (pid,))}
-    bt = run_backtest(ctx.panel(), ctx.calendar, StrategyConfig(start_date="2025-12-31", end_date="2026-08-31"))
-    assert list(bt.nav.index) == list(paper)
-    assert list(bt.nav["nav"]) == list(paper.values())
+    port = ctx.ledger.active()
+    paper = {r["session"]: r["nav"] for r in ctx.db.query("SELECT session, nav FROM paper_nav WHERE portfolio_id=? "
+                                                         "ORDER BY session", (port["id"],))}
+    cfg = ctx.ledger.config_of(port).model_copy(update={"start_date": port["inception_session"],
+                                                       "end_date": port["as_of_session"]})
+    bt = run_backtest(ctx.panel(), ctx.calendar, cfg)
+    assert list(bt.nav.index) == list(paper) and list(bt.nav["nav"]) == list(paper.values())

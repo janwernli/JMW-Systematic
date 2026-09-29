@@ -67,15 +67,19 @@ class FixtureProvider(MarketDataProvider):
     """In-memory provider for tests (and as a template for new adapters)."""
 
     def __init__(self, cal: TradingCalendar, series: dict[str, dict], actions: list[tuple] | None = None,
-                 benchmark: str | None = None):
+                 benchmark: str | None = None, sectors: dict[str, str] | None = None, etfs: set[str] | None = None,
+                 key: str = "fixture"):
         self._bars = bars_frame(cal, series)
         self._acts = pd.DataFrame(actions or [], columns=ACTION_COLUMNS)
+        etfs = set(etfs or ())
         self._inst = [InstrumentRecord(symbol=s, name=s, exchange="TEST",
-                                       asset_type="etf" if s == benchmark else "common_stock",
-                                       asset_type_source="test", is_benchmark=s == benchmark) for s in series]
+                                       asset_type="etf" if s == benchmark or s in etfs else "common_stock",
+                                       asset_type_source="test", is_benchmark=s == benchmark,
+                                       sector=(sectors or {}).get(s), sector_source="test" if sectors else None)
+                      for s in series]
         self._range = (cal.sessions[0], cal.sessions[len(next(iter(series.values()))["close"]) - 1])
         self.info = ProviderInfo(
-            key="fixture", name="Test fixture", feed="fixture", data_label="Demo Data", is_demo=True,
+            key=key, name="Test fixture", feed="fixture", data_label="Demo Data", is_demo=True,
             benchmark_symbol=benchmark or "", benchmark_return_basis="total_return", point_in_time_universe=True,
             coverage_note="test", entitlement_note="test", adjustment_note="test", survivorship_note="test",
             requires_key=False)
@@ -93,3 +97,34 @@ class FixtureProvider(MarketDataProvider):
 
     def default_history_range(self):
         return self._range
+
+
+SECTOR_ETF = {"Information Technology": "XLK", "Financials": "XLF", "Health Care": "XLV", "Consumer Discretionary": "XLY",
+              "Consumer Staples": "XLP", "Energy": "XLE", "Industrials": "XLI", "Materials": "XLB", "Utilities": "XLU",
+              "Real Estate": "XLRE", "Communication Services": "XLC"}
+
+
+def rich_fixture(n_stocks: int = 60, n_sessions: int = 1050, seed: int = 11, start: str = "2019-01-01"):
+    """Realistic-ish universe: market + 11 sector factors + persistent idiosyncratic drift; SPY + sector ETFs."""
+    cal = weekday_calendar(start, n_sessions + 30)
+    rng = np.random.default_rng(seed)
+    T = n_sessions
+    mkt = rng.normal(0.0004, 0.01, T)
+    secs = list(SECTOR_ETF)
+    sec_r = {sec: rng.normal(0, 0.006, T) for sec in secs}
+    series = {"SPY": {"close": np.round(300 * np.exp(np.cumsum(mkt)), 4), "volume": np.full(T, 5e7)}}
+    for sec, etf in SECTOR_ETF.items():
+        series[etf] = {"close": np.round(50 * np.exp(np.cumsum(mkt + sec_r[sec])), 4), "volume": np.full(T, 1e7)}
+    sectors = {}
+    for k in range(n_stocks):
+        sym = f"S{k:03d}"
+        sec = secs[k % len(secs)]
+        sectors[sym] = sec
+        drift = np.cumsum(rng.normal(0, 0.00004, T)) + rng.normal(0, 0.0004)
+        r = rng.uniform(0.7, 1.4) * mkt + sec_r[sec] + drift + rng.normal(0, 0.015, T)
+        close = np.round(rng.uniform(15, 150) * np.exp(np.cumsum(r)), 4)
+        series[sym] = {"close": close, "volume": np.round(rng.uniform(2e5, 4e6) * np.ones(T))}
+    for d in series.values():
+        d["open"] = np.round(d["close"] * (1 + rng.normal(0, 0.002, T)), 4)
+    prov = FixtureProvider(cal, series, benchmark="SPY", sectors=sectors, etfs=set(SECTOR_ETF.values()))
+    return cal, prov, series, sectors

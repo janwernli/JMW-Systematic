@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..data.panel import Panel
+from .composite import add_composite
 from .config import StrategyConfig
 from .long_short import build_books
 
@@ -26,6 +27,7 @@ REASONS = {
     "missing_liquidity_data": "Incomplete dollar-volume window",
     "adv_below_min": "Average daily dollar volume below the minimum",
     "delisting_at_signal": "Delisting on the signal session",
+    "not_in_index": "Not a member of the point-in-time index universe at the signal session",
 }
 
 
@@ -57,9 +59,9 @@ class SignalResult:
 
 def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[str] | None = None,
                     held_short: set[str] | None = None, blocked_shorts: set[str] | None = None) -> SignalResult:
-    """Eligibility + momentum ranking, then v1 (top-N equal weight) or v2 (long-short books) targets.
+    """Eligibility, signal ranking (composite or plain 12-1), then long-short books and sizing.
 
-    held_long / held_short feed the v2 rank buffer; blocked_shorts = names stopped out since the last signal.
+    held_long / held_short feed the rank buffer; blocked_shorts = names stopped out since the last signal.
     """
     session = panel.sessions[t]
     inst = panel.instruments
@@ -83,6 +85,14 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[st
     with np.errstate(invalid="ignore", divide="ignore"):
         mom = tr21 / tr252 - 1.0
     history = panel.valid_count[t - 1] if t >= 1 else np.zeros(len(panel.symbols), dtype=np.int32)
+    # 60-session ADV for the hard-to-borrow stand-in (missing bars ignored, >= 80% of the window required)
+    h0 = max(t - cfg.htb_adv_window + 1, 0)
+    dvh = panel.close[h0:t + 1] * panel.volume[h0:t + 1]
+    nh = np.sum(np.isfinite(dvh), axis=0)
+    with np.errstate(invalid="ignore"):
+        adv_h = np.where(nh >= 0.8 * cfg.htb_adv_window, np.nansum(np.nan_to_num(dvh, nan=0.0), axis=0) / np.maximum(nh, 1),
+                         np.nan)
+    member = panel.membership[t] if panel.membership is not None else None
 
     rows = []
     universe = 0
@@ -107,6 +117,8 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[st
                 reason = "missing_lookback_price"
             elif panel.delist_idx[j] == t:
                 reason = "delisting_at_signal"
+            elif member is not None and not member[j]:
+                reason = "not_in_index"
             elif not close_t[j] > cfg.min_price:
                 reason = "price_below_min"
             elif np.isnan(adv[j]):
@@ -126,37 +138,42 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[st
             "tr_t252": None if np.isnan(tr252[j]) else float(tr252[j]),
             "valid_history": int(history[j]),
             "momentum": None if np.isnan(mom[j]) else float(mom[j]),
+            "adv60": None if np.isnan(adv_h[j]) else float(adv_h[j]),
             "eligible": reason == "eligible",
             "reason": reason,
         })
     table = pd.DataFrame(rows, columns=[
         "symbol", "asset_type", "close_raw", "adv20", "session_t21", "session_t252", "tr_t21", "tr_t252",
-        "valid_history", "momentum", "eligible", "reason",
+        "valid_history", "momentum", "adv60", "eligible", "reason",
     ])
     table["rank"] = pd.array([pd.NA] * len(table), dtype="Int64")
     table["selected"] = False
     table["target_weight"] = 0.0
 
-    elig = table[table["eligible"]]
-    # Deterministic ordering: momentum desc, then ADV desc, then symbol asc.
-    ranked = elig.sort_values(["momentum", "adv20", "symbol"], ascending=[False, False, True], kind="mergesort")
-    table.loc[ranked.index, "rank"] = np.arange(1, len(ranked) + 1)
-    diagnostics: dict = {}
     table["side"] = None
     table["percentile"] = np.nan
     table["vol"] = np.nan
     table["beta"] = np.nan
-    if cfg.is_long_short:
-        diagnostics = build_books(panel, t, cfg, table, held_long or set(), held_short or set(), blocked_shorts or set())
-        n_sel = int(table["selected"].sum())
+    diagnostics: dict = {}
+    if cfg.signal == "composite":
+        diagnostics["composite"] = add_composite(panel, t, cfg, table)
+        table["score"] = table["composite"]
     else:
-        n_sel = min(cfg.top_n, len(ranked))
-        sel_idx = ranked.index[:n_sel]
-        table.loc[sel_idx, "selected"] = True
-        table["side"] = None
-        if n_sel:
-            table.loc[sel_idx, "target_weight"] = 1.0 / n_sel
-            table.loc[sel_idx, "side"] = "long"
+        table["sector"] = [panel.instruments.at[x, "sector"] if isinstance(panel.instruments.at[x, "sector"], str)
+                           else None for x in table["symbol"]]
+        for c in ("resid_mom", "sector_mom", "fip", "composite"):
+            table[c] = np.nan
+        table["score"] = table["momentum"]
+    # A stock needs a finite score to be ranked.
+    table.loc[table["eligible"] & table["score"].isna(), ["eligible", "reason"]] = [False, "missing_lookback_price"]
+    elig = table[table["eligible"]]
+    # Deterministic ordering: score desc, then ADV desc, then symbol asc.
+    ranked = elig.sort_values(["score", "adv20", "symbol"], ascending=[False, False, True], kind="mergesort")
+    table.loc[ranked.index, "rank"] = np.arange(1, len(ranked) + 1)
+    diagnostics.update(build_books(panel, t, cfg, table, held_long or set(), held_short or set(), blocked_shorts or set()))
+    diagnostics["signal"] = cfg.signal
+    diagnostics["config_warnings"] = cfg.config_warnings()
+    n_sel = int(table["selected"].sum())
 
     coverage = with_bar / universe if universe else 0.0
     blocked = None
@@ -167,7 +184,7 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[st
                    f"(minimum {cfg.min_session_coverage:.0%}); data is stale or incomplete.")
     elif n_sel == 0:
         blocked = "No eligible securities at the signal session."
-    elif cfg.is_long_short and not (diagnostics.get("long_names") and diagnostics.get("short_names")):
+    elif not (diagnostics.get("long_names") and diagnostics.get("short_names")):
         blocked = "Long-short books could not be formed: " + "; ".join(diagnostics.get("notes", []))
 
     return SignalResult(

@@ -59,11 +59,16 @@ def universe(session: str | None = Query(None, description="Signal session (defa
         q = shares.get(sym, 0)
         rows.append({
             "symbol": sym, "name": inst.at[sym, "name"] if "name" in inst.columns else None,
-            "sector": inst.at[sym, "sector"] if isinstance(inst.at[sym, "sector"], str) else None,
+            "sector": r.sector if isinstance(r.sector, str) else None,
             "asset_type": r.asset_type, "close_raw": r.close_raw, "adv20": r.adv20, "momentum": r.momentum,
             "rank": None if str(r.rank) == "<NA>" else int(r.rank), "eligible": bool(r.eligible), "reason": r.reason,
             "reason_text": REASONS.get(r.reason, r.reason), "selected": bool(r.selected),
             "side": r.side if isinstance(r.side, str) else None,
+            "score": None if r.score != r.score else float(r.score),
+            "resid_mom": None if r.resid_mom != r.resid_mom else float(r.resid_mom),
+            "sector_mom": None if r.sector_mom != r.sector_mom else float(r.sector_mom),
+            "fip": None if r.fip != r.fip else float(r.fip),
+            "composite": None if r.composite != r.composite else float(r.composite),
             "percentile": None if r.percentile != r.percentile else float(r.percentile),
             "vol": None if r.vol != r.vol else float(r.vol), "beta": None if r.beta != r.beta else float(r.beta),
             "model_weight": float(r.target_weight), "plan_target_weight": plan_w.get(sym, 0.0) if plan else None,

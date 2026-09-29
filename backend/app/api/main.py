@@ -19,13 +19,13 @@ from ..data.provider import ProviderError
 from ..ledger.paper import LedgerError
 from ..logging_setup import configure_logging
 from ..services import AppContext
-from .routes import ledger, portfolio, rebalance, research, system, universe
+from .routes import broker, ledger, portfolio, rebalance, research, system, universe
 
 log = logging.getLogger("app.api")
 FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 
 
-def create_app(settings: Settings | None = None, ctx: AppContext | None = None, seed: bool | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, ctx: AppContext | None = None) -> FastAPI:
     settings = settings or get_settings()
 
     @asynccontextmanager
@@ -35,20 +35,14 @@ def create_app(settings: Settings | None = None, ctx: AppContext | None = None, 
         context = ctx or AppContext(settings)
         app.state.ctx = context
         context.recover_interrupted_runs()
-        if (settings.demo_autoseed if seed is None else seed):
-            t0 = time.perf_counter()
-            try:
-                context.seed_demo()
-            except Exception:  # noqa: BLE001 - the app must still start and show the error state
-                log.exception("demo seed failed")
-            log.info("startup complete", extra={"seconds": round(time.perf_counter() - t0, 2)})
+        log.info("startup complete", extra={"provider": context.provider.info.key if context.provider else None})
         yield
         context.executor.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(
         title="Momentum Terminal API",
         version=__version__,
-        description="US equities 12-1 momentum research and INTERNAL paper simulation. No brokerage connectivity.",
+        description="US equities long-short momentum: research, model ledger and Alpaca PAPER trading automation.",
         lifespan=lifespan,
     )
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_methods=["*"], allow_headers=["*"])
@@ -92,7 +86,8 @@ def create_app(settings: Settings | None = None, ctx: AppContext | None = None, 
         return JSONResponse(status_code=500, content={"error": "internal_error",
                                                       "message": f"{type(exc).__name__}: {exc}"})
 
-    for r in (system.router, universe.router, portfolio.router, rebalance.router, research.router, ledger.router):
+    for r in (system.router, universe.router, portfolio.router, rebalance.router, research.router, ledger.router,
+              broker.router):
         app.include_router(r, prefix="/api")
 
     # Serve the production frontend build (npm run build) from the same localhost origin.
@@ -112,5 +107,5 @@ def create_app(settings: Settings | None = None, ctx: AppContext | None = None, 
 def export_openapi(path: Path) -> None:
     import json
 
-    app = create_app(seed=False)
+    app = create_app()
     path.write_text(json.dumps(app.openapi(), indent=2), encoding="utf-8")

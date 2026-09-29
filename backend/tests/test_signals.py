@@ -14,7 +14,8 @@ BASE = 100.0 + np.arange(N)  # close_i = 100 + i
 
 
 def cfg(**kw):
-    base = dict(mode="long_only", min_adv_usd=0, min_price=5)
+    base = dict(signal="momentum_12_1", htb_exclude_pct=0.0, sector_neutral=False, min_adv_usd=0, min_price=5,
+                min_names_per_side=1, max_names_per_side=1, short_min_price=0)
     base.update(kw)
     return StrategyConfig(**base)
 
@@ -100,7 +101,7 @@ def test_liquidity_filter_and_complete_window():
     holey[t - 3] = np.nan               # one missing bar in the 20-session ADV window
     p = make_panel(CAL, {"LIQ": {"close": BASE, "volume": vol_ok}, "ILL": {"close": BASE, "volume": vol_low},
                          "HOL": {"close": holey, "volume": vol_ok}})
-    tab = compute_signals(p, t, StrategyConfig(mode="long_only")).table.set_index("symbol")
+    tab = compute_signals(p, t, cfg(min_adv_usd=5_000_000)).table.set_index("symbol")
     assert tab.loc["LIQ", "eligible"]
     assert tab.loc["ILL", "reason"] == "adv_below_min"
     assert tab.loc["HOL", "reason"] == "missing_liquidity_data"
@@ -108,20 +109,20 @@ def test_liquidity_filter_and_complete_window():
     assert tab.loc["LIQ", "adv20"] == pytest.approx(window.mean())
 
 
-def test_deterministic_tie_break_and_top_n():
+def test_deterministic_tie_break_and_books():
     t = month_end_index(260)
     series = {s: {"close": BASE, "volume": np.full(N, v)} for s, v in [("CCC", 1e6), ("BBB", 2e6), ("AAA", 1e6)]}
-    sig = compute_signals(make_panel(CAL, series), t, cfg(top_n=2))
+    sig = compute_signals(make_panel(CAL, series), t, cfg())
     order = list(sig.table.sort_values("rank")["symbol"])
     assert order == ["BBB", "AAA", "CCC"]  # equal momentum -> higher ADV, then symbol ascending
-    assert list(sig.selected["symbol"]) == ["BBB", "AAA"]
-    assert sig.selected["target_weight"].tolist() == [0.5, 0.5]
+    sides = dict(zip(sig.table["symbol"], sig.table["side"]))
+    assert sides["BBB"] == "long" and sides["CCC"] == "short" and sides["AAA"] is None
 
 
 def test_excludes_non_common_and_benchmark():
     t = month_end_index(260)
-    p = make_panel(CAL, {"AAA": {"close": BASE}, "ETF": {"close": BASE}, "SPYX": {"close": BASE}},
-                   benchmark="SPYX", types={"ETF": "etf"})
+    p = make_panel(CAL, {"AAA": {"close": BASE}, "ZZZ": {"close": BASE[::-1] + 1}, "ETF": {"close": BASE},
+                         "SPYX": {"close": BASE}}, benchmark="SPYX", types={"ETF": "etf"})
     tab = compute_signals(p, t, cfg()).table.set_index("symbol")
     assert tab.loc["ETF", "reason"] == "excluded_asset_type"
     assert tab.loc["SPYX", "reason"] == "benchmark"

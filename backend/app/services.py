@@ -1,4 +1,5 @@
-"""Application context: wires settings, database, calendar, provider, ledger and the run executor."""
+"""Application context: wires settings, database, calendar, data provider, model ledger, paper broker and
+the background executor."""
 
 from __future__ import annotations
 
@@ -8,7 +9,6 @@ from concurrent.futures import ThreadPoolExecutor
 from .backtest.runner import create_run, execute_run
 from .calendar import TradingCalendar, xnys_calendar
 from .config import Settings
-from .data.demo_provider import DemoProvider
 from .data.panel import Panel
 from .data.provider import MarketDataProvider, ProviderError
 from .data.store import data_version, get_panel, run_import
@@ -18,27 +18,26 @@ from .strategy.config import StrategyConfig
 
 log = logging.getLogger(__name__)
 
-DEMO_PAPER_INCEPTION = "2025-12-31"
-DEMO_PAPER_SEED_UNTIL = "2026-08-31"
-
 
 def build_provider(settings: Settings) -> MarketDataProvider:
-    if settings.market_data_provider == "alpaca":
-        from .data.alpaca_provider import AlpacaProvider
+    if settings.market_data_provider == "norgate":
+        from .data.norgate_provider import NorgateProvider
 
-        return AlpacaProvider(
-            key_id=settings.alpaca_api_key_id.get_secret_value() if settings.alpaca_api_key_id else "",
-            secret=settings.alpaca_api_secret_key.get_secret_value() if settings.alpaca_api_secret_key else "",
-            feed=settings.alpaca_data_feed, data_url=settings.alpaca_data_base_url,
-            trading_url=settings.alpaca_trading_base_url, history_start=settings.alpaca_history_start,
-            universe_file=settings.alpaca_universe_file, max_symbols=settings.alpaca_max_symbols,
-        )
-    return DemoProvider()
+        return NorgateProvider(index_name=settings.norgate_index, history_start=settings.norgate_history_start)
+    from .data.alpaca_provider import AlpacaProvider
+
+    return AlpacaProvider(
+        key_id=settings.alpaca_api_key_id.get_secret_value() if settings.alpaca_api_key_id else "",
+        secret=settings.alpaca_api_secret_key.get_secret_value() if settings.alpaca_api_secret_key else "",
+        feed=settings.alpaca_data_feed, data_url=settings.alpaca_data_base_url,
+        trading_url=settings.alpaca_trading_base_url, history_start=settings.alpaca_history_start,
+        universe_file=settings.alpaca_universe_file, max_symbols=settings.alpaca_max_symbols,
+    )
 
 
 class AppContext:
     def __init__(self, settings: Settings, calendar: TradingCalendar | None = None,
-                 provider: MarketDataProvider | None = None):
+                 provider: MarketDataProvider | None = None, broker=None):
         self.settings = settings
         self.db = Database(settings.database_path)
         self.calendar = calendar or xnys_calendar()
@@ -50,10 +49,33 @@ class AppContext:
             except ProviderError as e:
                 self.provider_error = str(e)
                 log.error("market data provider unavailable", extra={"error": str(e)})
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="backtest")
+        self._broker = broker
+        self.broker_error: str | None = None
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="worker")
         key = self.provider.info.key if self.provider else settings.market_data_provider
-        self.ledger = PaperLedger(self.db, self.calendar, key, self.panel, self.data_version,
-                                  is_demo=bool(self.provider and self.provider.info.is_demo))
+        self.ledger = PaperLedger(self.db, self.calendar, key, self.panel, self.data_version)
+
+    # ------------------------------------------------------------------ broker
+    @property
+    def broker(self):
+        """Alpaca PAPER broker (None if keys are missing)."""
+        if self._broker is None and self.broker_error is None:
+            from .broker.alpaca_paper import AlpacaPaperBroker, BrokerError
+
+            s = self.settings
+            try:
+                self._broker = AlpacaPaperBroker(
+                    s.alpaca_api_key_id.get_secret_value() if s.alpaca_api_key_id else "",
+                    s.alpaca_api_secret_key.get_secret_value() if s.alpaca_api_secret_key else "",
+                    s.broker_paper_url)
+            except BrokerError as e:
+                self.broker_error = str(e)
+        return self._broker
+
+    def daily_cycle(self, trigger: str = "manual", dry_run: bool = False) -> dict:
+        from .automation import DailyCycle
+
+        return DailyCycle(self, self.broker).run(trigger=trigger, dry_run=dry_run)
 
     # ------------------------------------------------------------------ data access
     def require_provider(self) -> MarketDataProvider:
@@ -78,27 +100,49 @@ class AppContext:
     def data_label(self) -> str:
         if self.provider:
             return self.provider.info.data_label
-        return "Demo Data" if self.settings.market_data_provider == "demo" else "Delayed Market Data"
+        return "End-of-Day Market Data" if self.settings.market_data_provider == "norgate" else "Delayed Market Data"
 
     def refresh_data(self, full: bool = False) -> dict:
         """Import from the provider.
 
-        Live providers: after the first import the universe is FROZEN (same symbols on every refresh) and
-        only the last 10 stored sessions onward are re-fetched, which also picks up late corrections.
-        `full=True` re-fetches the whole history for the frozen universe. The demo is simply re-imported.
+        After the first import the universe is FROZEN: refreshes re-fetch the last 10 stored sessions onward for
+        the same symbols (catching late corrections). Symbols the provider adds that have no history yet (e.g.
+        reference sector ETFs) are back-filled with full history first. `full=True` re-fetches everything.
+        Missing sectors are then filled from SEC EDGAR (if SEC_USER_AGENT is configured).
         """
         prov = self.require_provider()
-        if prov.info.is_demo:
-            return run_import(self.db, prov, self.calendar)
+        key = prov.info.key
         existing = [r["symbol"] for r in self.db.query(
-            "SELECT symbol FROM instruments WHERE provider=? ORDER BY symbol", (prov.info.key,))]
+            "SELECT symbol FROM instruments WHERE provider=? ORDER BY symbol", (key,))]
         start = None
         if existing and not full:
             hi = self.db.scalar("SELECT MAX(b.session) FROM bars b JOIN instruments i ON i.id=b.instrument_id "
-                                "WHERE i.provider=?", (prov.info.key,))
+                                "WHERE i.provider=?", (key,))
             if hi:
                 start = self.calendar.offset(self.calendar.session_on_or_before(hi), -10)
-        return run_import(self.db, prov, self.calendar, start=start, symbols=existing or None)
+            wanted = {i.symbol for i in prov.list_instruments(existing)}
+            with_bars = {r["symbol"] for r in self.db.query(
+                "SELECT DISTINCT i.symbol FROM instruments i JOIN bars b ON b.instrument_id=i.id WHERE i.provider=?", (key,))}
+            new = sorted(wanted - with_bars)
+            if new:
+                log.info("backfilling new symbols", extra={"symbols": new})
+                run_import(self.db, prov, self.calendar, symbols=new)
+        result = run_import(self.db, prov, self.calendar, start=start, symbols=existing or None)
+        self.fill_sectors()
+        return result
+
+    def fill_sectors(self, only_missing: bool = True) -> dict | None:
+        if not self.settings.sec_user_agent or self.provider is None:
+            return None
+        from .data.sectors import SecClient, classify_instruments
+
+        try:
+            return classify_instruments(self.db, self.provider.info.key, SecClient(self.settings.sec_user_agent),
+                                        only_missing=only_missing)
+        except Exception as e:  # noqa: BLE001 - sectors are optional; never block a data refresh
+            with self.db.transaction() as conn:
+                log_event(conn, "warning", "data_import", f"SEC sector classification failed: {e}")
+            return None
 
     # ------------------------------------------------------------------ backtests
     def submit_backtest(self, cfg: StrategyConfig, name: str | None) -> int:
@@ -114,29 +158,4 @@ class AppContext:
                              "WHERE status IN ('queued','running')").rowcount
             if n:
                 log_event(conn, "warning", "backtest", f"{n} interrupted backtest run(s) marked failed after restart")
-
-    # ------------------------------------------------------------------ demo seed
-    def seed_demo(self) -> None:
-        """First-start bootstrap: demo data, one default backtest, and a demo virtual portfolio.
-
-        The demo portfolio is funded at the close of 2025-12-31 and advanced with the
-        monthly plans applied automatically through July; the 2026-08-31 plan is left
-        *proposed* so the Rebalance Desk shows a live decision.
-        """
-        prov = self.provider
-        if prov is None or not prov.info.is_demo:
-            return
-        if not self.has_data():
-            log.info("seeding demo market data")
-            run_import(self.db, prov, self.calendar)
-        if not self.db.scalar("SELECT COUNT(*) FROM backtest_runs WHERE provider=?", (prov.info.key,)):
-            cfg = StrategyConfig()
-            run_id = create_run(self.db, cfg, prov.info, self.data_version(), "Default v1 (demo seed)")
-            execute_run(self.db, run_id, self.panel(), self.calendar, prov.info)
-        if not self.db.scalar("SELECT COUNT(*) FROM paper_portfolios WHERE provider=?", (prov.info.key,)):
-            self.ledger.initialize(StrategyConfig(), inception_session=DEMO_PAPER_INCEPTION,
-                                   name="Demo virtual portfolio")
-            self.ledger.advance(until=DEMO_PAPER_SEED_UNTIL, auto_apply=True)
-            with self.db.transaction() as conn:
-                log_event(conn, "info", "paper", "Demo seed: plans through July 2026 were auto-applied; the August "
-                          "plan awaits your decision in the Rebalance Desk.")
+            conn.execute("UPDATE automation_runs SET status='error', summary='Interrupted' WHERE status='running'")

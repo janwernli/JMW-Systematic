@@ -29,7 +29,7 @@ ZERO = CostModel(0, 0, 0)
 
 
 def ls_cfg(**kw):
-    d = dict(mode="long_short", lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3,
+    d = dict(signal="momentum_12_1", htb_exclude_pct=0.0, sector_neutral=False, lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3,
              min_adv_usd=0, min_price=1, short_min_price=1, slippage_bps=0, vol_lookback_sessions=20,
              beta_lookback_sessions=60, beta_shrink=0.0, min_names_per_side=2, max_names_per_side=5,
              long_pct=0.10, short_pct=0.10, buffer_exit_pct=0.30, max_long_weight=0.5, max_short_weight=0.5,
@@ -74,10 +74,12 @@ def test_short_pays_dividend_and_split_fractions():
     assert evs[0].kind == "cash_in_lieu" and evs[0].amount == -10.0             # pays 0.5 sh x $20
 
 
-def test_borrow_fee_is_daily_share_of_annual_rate():
-    p = make_panel(CAL10, {"A": {"close": np.full(10, 100.0)}})
-    fee, short_value = borrow_fee(p, 0, {"A": -100}, 0.005)
-    assert short_value == 10_000.0 and fee == 0.20            # 10,000 x 0.5% / 252 = 0.198 -> $0.20
+def test_borrow_fee_accrues_per_calendar_day_act_360():
+    p = make_panel(CAL10, {"A": {"close": np.full(10, 100.0)}})   # CAL10 starts Monday 2021-01-04
+    fee, short_value = borrow_fee(p, 1, {"A": -100}, 0.005)      # Tue: 1 calendar day
+    assert short_value == 10_000.0 and fee == 0.14            # 10,000 x 0.5% / 360 x 1 = 0.1389
+    fee_mon, _ = borrow_fee(p, 5, {"A": -100}, 0.005)          # next Monday: Fri->Mon = 3 days
+    assert CAL10.sessions[5] == "2021-01-11" and fee_mon == 0.42   # 0.1389 x 3 = 0.4167
 
 
 def test_execution_order_reduce_short_cover_buy_with_flip():

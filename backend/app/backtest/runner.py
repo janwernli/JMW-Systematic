@@ -38,9 +38,16 @@ def git_commit() -> str | None:
 
 
 def assumptions(cfg: StrategyConfig, info: ProviderInfo, benchmark: str | None) -> list[dict]:
-    ls = []
-    if cfg.is_long_short:
-        ls = [
+    ls = [
+            {"key": "signal", "text": ("Composite rank signal: 60% residual momentum (36-month market + sector-ETF "
+                                       "regression, 11-month residual sum / residual vol), 25% sector-demeaned 12-1, "
+                                       "15% frog-in-the-pan; each winsorized at +/-3 sd and z-scored."
+                                       if cfg.signal == "composite" else "Plain 12-1 momentum ranking.")},
+            {"key": "sectors", "text": ("Sector-neutral: |long - short| <= "
+                                        f"{cfg.max_sector_net:.0%} of NAV per sector (SEC EDGAR SIC -> 11 sectors)."
+                                        if cfg.sector_neutral else "No sector-neutrality constraint.")},
+            {"key": "htb", "text": f"Hard-to-borrow stand-in: the least liquid {cfg.htb_exclude_pct:.0%} of eligible "
+                                   f"stocks by {cfg.htb_adv_window}-session dollar volume are never shorted."},
             {"key": "books", "text": f"Long the top {cfg.long_pct:.0%} and short the bottom {cfg.short_pct:.0%} of eligible "
                                      f"stocks by 12-1 momentum, {cfg.min_names_per_side}-{cfg.max_names_per_side} names per "
                                      f"side. Buffer: held names stay while in the top/bottom {cfg.buffer_exit_pct:.0%}."},
@@ -59,13 +66,13 @@ def assumptions(cfg: StrategyConfig, info: ProviderInfo, benchmark: str | None) 
                                             f"{cfg.vol_lookback_sessions}-session vol > {cfg.crash_market_vol_threshold:.0%}."
                                             if cfg.crash_guard else "Crash guard disabled.")},
             {"key": "shorts", "text": f"Shorts need a raw close > ${cfg.short_min_price:g}. ASSUMED borrow fee "
-                                      f"{cfg.borrow_fee_annual:.2%}/yr charged daily on short market value; short proceeds "
+                                      f"{cfg.borrow_fee_annual:.2%}/yr accrued per calendar day (/360) on short market value; short proceeds "
                                       "are held as cash earning 0%; shorts pay dividends on the ex-date; no locates, recalls "
                                       "or hard-to-borrow costs are modelled."},
             {"key": "stop_loss", "text": (f"Short stop-loss: when a close is {cfg.short_stop_loss:.0%} above the average short "
                                           "entry, the short is covered at the next open (automatic) and may not be re-shorted "
                                           "until the next monthly signal." if cfg.short_stop_loss else "No short stop-loss.")},
-        ]
+    ]
     return ls + [
         {"key": "signal", "text": f"12-1 momentum = TR(t-{cfg.skip_sessions}) / TR(t-{cfg.lookback_sessions}) - 1, "
                                   "computed after the close of the last NYSE session of each month and frozen."},
@@ -75,11 +82,8 @@ def assumptions(cfg: StrategyConfig, info: ProviderInfo, benchmark: str | None) 
                                     "(not observed execution cost)."},
         {"key": "commission", "text": f"ASSUMED commission ${cfg.commission_per_order:g} per fill + "
                                       f"{cfg.commission_bps:g} bps of traded value."},
-        {"key": "sizing", "text": ("Signed target weights of NAV at the open; whole shares only; order: reduce longs, "
-                                   "short sales, covers, then buys in rank order limited by cash."
-                                   if cfg.is_long_short else
-                                   "Equal target weights of NAV at the open; whole shares only (floor); sells before buys; "
-                                   "buys in rank order until cash is exhausted; leftover = residual cash.")},
+        {"key": "sizing", "text": "Signed target weights of NAV at the open; whole shares only; order: reduce longs, "
+                                  "short sales, covers, then buys in rank order limited by cash."},
         {"key": "dividends", "text": "Cash dividends are credited to cash on the ex-date (pay-date lag ignored); prices used "
                                      "for valuation are raw (unadjusted), so dividends are never double counted."},
         {"key": "splits", "text": "Splits adjust share counts on the ex-date; fractional shares are paid as cash-in-lieu."},
@@ -103,8 +107,8 @@ def create_run(db: Database, cfg: StrategyConfig, info: ProviderInfo, data_versi
         cur = conn.execute(
             "INSERT INTO backtest_runs (name, status, progress, config_id, config_json, provider, data_label,"
             " data_version, data_import_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (name or (f"L/S {cfg.long_pct:.0%}/{cfg.short_pct:.0%} vol {cfg.target_vol:.0%}" if cfg.is_long_short
-                      else f"Long-only top {cfg.top_n}") + f" / {cfg.slippage_bps:g}bps", "queued", 0.0, cfg_id, cfg.canonical_json(),
+            (name or f"{'Composite' if cfg.signal == 'composite' else '12-1'} L/S vol {cfg.target_vol:.0%} / "
+                      f"{cfg.slippage_bps:g}bps", "queued", 0.0, cfg_id, cfg.canonical_json(),
              info.key, info.data_label, data_version, imp, utcnow()))
         run_id = cur.lastrowid
         log_event(conn, "info", "backtest", f"Backtest #{run_id} queued", run_id=run_id,
@@ -140,7 +144,7 @@ def persist_result(db: Database, run_id: int, res: BacktestResult, info: Provide
     reb_dicts = [{"status": r.status, "turnover": r.turnover, "slippage_cost": r.slippage_cost,
                   "commission": r.commission} for r in res.rebalances]
     metrics = compute_metrics(nav, reb_dicts, cfg.initial_capital)
-    metrics["mode"] = cfg.mode
+    metrics["signal"] = cfg.signal
     metrics["borrow_fees"] = float(-sum(e.amount for _, e in res.cash_events if e.kind == "borrow_fee"))
     metrics["short_dividends_paid"] = float(-sum(e.amount for _, e in res.cash_events
                                                  if e.kind == "dividend" and e.amount < 0))

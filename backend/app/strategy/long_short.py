@@ -16,6 +16,13 @@ Steps (documented in the UI and README):
      beta-neutral portfolio's trailing daily returns; bounded by min/max gross per side, the total
      gross cap, and per-name cap capacity. If neutrality and the minimum gross conflict, the minimum
      gross is relaxed (caps and neutrality take priority) and the conflict is reported.
+  5b. Sector neutrality: a small quadratic program moves the weights as little as possible
+     (relative squared deviation from the inverse-vol weights) so that |long - short| per sector
+     <= `max_sector_net`, keeping each side's gross, beta neutrality and per-name caps. If it is
+     infeasible, the unconstrained weights are kept and the failure is reported.
+  5c. Hard-to-borrow stand-in: the least liquid `htb_exclude_pct` of eligible stocks by
+     `htb_adv_window`-session dollar volume cannot be shorted (live trading also checks
+     Alpaca's easy-to-borrow flag at order time).
   6. Crash guard: if the benchmark's trailing 24-month total return < 0 AND its 6-month realized vol
      > `crash_market_vol_threshold`, the short book is multiplied by `crash_short_scale`.
 """
@@ -58,7 +65,7 @@ def betas(panel: Panel, t: int, window: int, bench_col: int | None, shrink: floa
         return np.ones(N)
     r = _daily_returns(panel, t, window)
     m = r[:, bench_col]
-    out = np.full(N, np.nan)
+    out = np.ones(N)  # insufficient history -> the shrinkage prior beta = 1
     ok_m = ~np.isnan(m)
     for j in range(N):
         ok = ok_m & ~np.isnan(r[:, j])
@@ -122,6 +129,17 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     usable = [s for s in elig["symbol"] if not np.isnan(vol[j_of[s]]) and not np.isnan(beta[j_of[s]])]
     close = dict(zip(table["symbol"], table["close_raw"]))
     shortable = [s for s in usable if (close.get(s) or 0) > cfg.short_min_price and s not in blocked_shorts]
+    htb_threshold = None
+    if cfg.htb_exclude_pct > 0 and "adv60" in table.columns:
+        adv60 = dict(zip(table["symbol"], table["adv60"]))
+        vals = np.array([adv60.get(x) for x in elig["symbol"] if adv60.get(x) is not None and adv60.get(x) == adv60.get(x)],
+                        dtype=float)
+        if vals.size:
+            htb_threshold = float(np.quantile(vals, cfg.htb_exclude_pct))
+            before = len(shortable)
+            shortable = [x for x in shortable if (adv60.get(x) or 0) >= htb_threshold]
+            diag["htb_excluded"] = before - len(shortable)
+    diag["htb_adv_threshold"] = htb_threshold
     side_cap = min(cfg.max_names_per_side, n // 2)
     side_min = min(cfg.min_names_per_side, side_cap)
 
@@ -187,6 +205,17 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     if feasible and abs(GL - lo) < 1e-9 and g_star < lo:
         binding.append("vol target below minimum gross (minimum applied)")
 
+    # ---- sector neutrality ---------------------------------------------------------------------------
+    sector_of = dict(zip(table["symbol"], table["sector"])) if "sector" in table.columns else {}
+    sector_info = {"enabled": cfg.sector_neutral, "applied": False, "max_abs_net": None, "status": "disabled"}
+    if cfg.sector_neutral:
+        secL = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in longs]
+        secS = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in shorts]
+        wL, wS, sector_info = sector_neutralize(wL, wS, bL_i, bS_i, secL, secS, cfg.max_long_weight,
+                                                cfg.max_short_weight, cfg.max_sector_net)
+        if sector_info["status"] not in ("ok", "already_neutral"):
+            diag["notes"].append(f"Sector neutrality: {sector_info['status']}")
+
     # ---- crash guard -------------------------------------------------------------------------------
     crash = {"enabled": cfg.crash_guard, "active": False, "market_return": None, "market_vol": None}
     if cfg.crash_guard and bench_col is not None:
@@ -217,7 +246,81 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
         beta_long=betaL, beta_short=betaS, beta_ratio=ratio, ex_ante_net_beta=net_beta,
         unit_vol=sig_unit, vol_target=cfg.target_vol, ex_ante_vol=float(np.std(port, ddof=1) * math.sqrt(252)),
         gross_bounds=[cfg.min_side_gross, cfg.max_side_gross], total_gross_cap=cfg.max_total_gross,
-        cap_capacity=[capL_tot, capS_tot], binding=binding, crash_guard=crash,
+        cap_capacity=[capL_tot, capS_tot], binding=binding, crash_guard=crash, sector_neutrality=sector_info,
         max_long_weight=float(wL.max()), max_short_weight=float(wS.max()),
     )
     return diag
+
+
+def sector_neutralize(wL: np.ndarray, wS: np.ndarray, bL: np.ndarray, bS: np.ndarray, secL: list[str | None],
+                      secS: list[str | None], capL: float, capS: float, max_net: float):
+    """Closest weights (relative squared deviation) with |net| <= max_net per classified sector.
+
+    Attempt 1 keeps each side's gross, the book's beta and per-name caps. If that is infeasible (checked
+    exactly with an LP), attempt 2 lets each side's gross shrink (beta neutrality and caps still hold): the
+    sector constraint takes priority over reaching the vol target, and the reduction is reported.
+    Unclassified names are unconstrained. On failure the input weights are returned unchanged.
+    """
+    from scipy.optimize import linprog, minimize
+
+    sectors = sorted({x for x in secL + secS if x})
+    nL, nS = len(wL), len(wS)
+
+    def nets(a: np.ndarray, b: np.ndarray) -> dict[str, float]:
+        return {sec: float(sum(w for w, x in zip(a, secL) if x == sec) - sum(w for w, x in zip(b, secS) if x == sec))
+                for sec in sectors}
+
+    before = nets(wL, wS)
+    info = {"enabled": True, "applied": False, "max_net": max_net, "sectors": len(sectors),
+            "unclassified": int(sum(1 for x in secL + secS if not x)),
+            "max_abs_net_before": max((abs(v) for v in before.values()), default=0.0), "gross_reduced": False}
+    if not sectors:
+        info.update(status="no sector data", sector_net=before, max_abs_net=None)
+        return wL, wS, info
+    if info["max_abs_net_before"] <= max_net + 1e-12:
+        info.update(status="already_neutral", sector_net=before, max_abs_net=info["max_abs_net_before"])
+        return wL, wS, info
+
+    k = 100.0  # optimise in percent-of-NAV units (better conditioning)
+    x0 = np.concatenate([wL, wS]) * k
+    S = np.zeros((len(sectors), nL + nS))
+    for i, sec in enumerate(sectors):
+        S[i, :nL] = [1.0 if x == sec else 0.0 for x in secL]
+        S[i, nL:] = [-1.0 if x == sec else 0.0 for x in secS]
+    G = np.vstack([np.r_[np.ones(nL), np.zeros(nS)], np.r_[np.zeros(nL), np.ones(nS)]])
+    B = np.r_[bL, -bS][None, :]
+    g0, beta0 = G @ x0, B @ x0
+    bounds = [(0.0, capL * k)] * nL + [(0.0, capS * k)] * nS
+    m = max_net * k
+    A_ub_sec = np.vstack([S, -S])
+    b_ub_sec = np.full(2 * len(sectors), m)
+
+    attempts = [("keep gross", np.vstack([G, B]), np.r_[g0, beta0], None, None),
+                ("reduce gross", B, beta0, G, g0)]
+    for label, A_eq, b_eq, A_extra, b_extra in attempts:
+        A_ub = A_ub_sec if A_extra is None else np.vstack([A_ub_sec, A_extra])
+        b_ub = b_ub_sec if b_extra is None else np.r_[b_ub_sec, b_extra]
+        lp = linprog(np.zeros(nL + nS), A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method="highs")
+        if lp.status != 0:
+            continue
+        cons = [{"type": "eq", "fun": lambda x, A=A_eq, b=b_eq: A @ x - b, "jac": lambda x, A=A_eq: A},
+                {"type": "ineq", "fun": lambda x, A=A_ub, b=b_ub: b - A @ x, "jac": lambda x, A=A_ub: -A}]
+        start = np.clip(lp.x, 1e-9, None) if label == "reduce gross" else x0
+        res = minimize(lambda x: float(np.sum((x - x0) ** 2 / x0)), start, jac=lambda x: 2 * (x - x0) / x0,
+                       method="SLSQP", bounds=bounds, constraints=cons, options={"maxiter": 1000, "ftol": 1e-12})
+        x = np.clip(res.x if res.success else lp.x, 0, None)
+        ok = (np.all(np.abs(S @ x) <= m + 1e-6) and np.allclose(A_eq @ x, b_eq, atol=1e-6)
+              and np.all(x[:nL] <= capL * k + 1e-7) and np.all(x[nL:] <= capS * k + 1e-7))
+        if not ok:
+            continue
+        x = x / k
+        after = nets(x[:nL], x[nL:])
+        reduced = label == "reduce gross"
+        info.update(applied=True, status="ok" if not reduced else "ok (gross reduced to meet sector limits)",
+                    sector_net=after, max_abs_net=max(abs(v) for v in after.values()), gross_reduced=reduced,
+                    solver="SLSQP" if res.success else "LP vertex (QP did not converge)",
+                    turnover_vs_unconstrained=float(np.abs(x * k - x0).sum() / k))
+        return x[:nL], x[nL:], info
+    info.update(status="infeasible even with reduced gross; unconstrained weights kept", sector_net=before,
+                max_abs_net=info["max_abs_net_before"])
+    return wL, wS, info

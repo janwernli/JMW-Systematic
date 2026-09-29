@@ -37,8 +37,7 @@ def status(ctx: AppContext = Depends(get_ctx)):
     has_data = bool(rng and rng["hi"])
     return {
         "app_version": __version__,
-        "mode": ("demo" if prov.info.is_demo else "live") if prov else
-                ("demo" if ctx.settings.market_data_provider == "demo" else "live"),
+        "mode": "live",
         "data_label": ctx.data_label(),
         "provider": prov.info.to_dict() if prov else None,
         "provider_error": ctx.provider_error,
@@ -84,10 +83,10 @@ def refresh(ctx: AppContext = Depends(get_ctx)):
     """Re-import from the configured provider in the background (idempotent upserts).
 
     Live providers fetch from 10 sessions before the latest stored session, so late
-    corrections are picked up; the demo fixture is simply re-imported.
+    corrections are picked up.
     """
     prov = ctx.require_provider()
-    incremental = not prov.info.is_demo and ctx.has_data()
+    incremental = ctx.has_data()
 
     def job():
         try:

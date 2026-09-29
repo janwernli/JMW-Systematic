@@ -43,6 +43,8 @@ from .provider import (
 log = logging.getLogger(__name__)
 NY = ZoneInfo("America/New_York")
 BENCHMARK = "SPY"
+SECTOR_ETFS = ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"]
+REFERENCE = [BENCHMARK] + SECTOR_ETFS  # not tradable by the strategy; used for beta, residual momentum, crash guard
 
 # Name patterns, checked in order. Alpaca exposes no ETF / share-class field, so the universe filter is a
 # documented heuristic aiming at "US common stock" in the CRSP share-code 10/11 sense (no funds, notes, ADRs,
@@ -166,7 +168,7 @@ class AlpacaProvider(MarketDataProvider):
         assets = self._get(f"{self.trading_url}/v2/assets", {"asset_class": "us_equity"})
         by_sym = {a["symbol"]: a for a in assets if a.get("exchange") in ("NYSE", "NASDAQ", "AMEX", "ARCA", "BATS")}
         if symbols is not None:
-            wanted = [s for s in symbols if s != BENCHMARK]
+            wanted = [s for s in symbols if s not in REFERENCE]
             self.selection_note = (f"Frozen universe of {len(wanted)} symbols chosen at the first import "
                                    "(refreshes do not re-select).")
         elif self.universe_file:
@@ -180,15 +182,16 @@ class AlpacaProvider(MarketDataProvider):
             self.selection_note = (f"Universe = top {len(wanted)} of {len(candidates)} active common stocks by RECENT "
                                    "dollar volume. This selection uses today's information (look-ahead/survivorship bias).")
         out: list[InstrumentRecord] = []
-        for s in dict.fromkeys(wanted + [BENCHMARK]):
+        for s in dict.fromkeys(wanted + REFERENCE):
             a = by_sym.get(s, {"symbol": s, "name": s, "status": "unknown"})
-            kind = "etf" if s == BENCHMARK else classify_asset(s, a.get("name", ""))
+            kind = "etf" if s in REFERENCE else classify_asset(s, a.get("name", ""))
             out.append(InstrumentRecord(
                 symbol=s, name=a.get("name") or s, exchange=a.get("exchange"), asset_type=kind,
                 asset_type_source="heuristic: Alpaca asset name/symbol pattern", sector=None, sector_source=None,
                 is_benchmark=s == BENCHMARK, active=a.get("status") == "active",
                 metadata={"alpaca_status": a.get("status"), "tradable": a.get("tradable"),
-                          "selection": self.selection_note},
+                          "selection": self.selection_note,
+                          "role": "benchmark" if s == BENCHMARK else "sector_etf" if s in SECTOR_ETFS else "universe"},
             ))
         self._instruments = out
         return out

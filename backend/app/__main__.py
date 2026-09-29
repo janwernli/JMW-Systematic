@@ -24,6 +24,10 @@ def main(argv: list[str] | None = None) -> int:
     imp.add_argument("--full", action="store_true", help="re-fetch full history for the (frozen) universe")
     adv = sub.add_parser("advance")
     adv.add_argument("--until", default=None)
+    daily = sub.add_parser("daily", help="run the automated daily cycle (data, sync, model, stops, rebalance)")
+    daily.add_argument("--dry-run", action="store_true", help="compute orders but never send them")
+    daily.add_argument("--trigger", default="cli")
+    sub.add_parser("sectors", help="(re)classify sectors from SEC EDGAR SIC codes")
     args = parser.parse_args(argv)
 
     from .config import get_settings
@@ -35,12 +39,21 @@ def main(argv: list[str] | None = None) -> int:
         export_openapi(args.path)
         print(f"wrote {args.path}")
         return 0
-    if args.cmd in ("import-data", "advance"):
+    if args.cmd in ("import-data", "advance", "daily", "sectors"):
         from .logging_setup import configure_logging
         from .services import AppContext
 
         configure_logging(settings.log_level, "text")
         ctx = AppContext(settings)
+        if args.cmd == "daily":
+            res = ctx.daily_cycle(trigger=args.trigger, dry_run=args.dry_run)
+            print(f"daily cycle #{res['run_id']}: {res['status']}")
+            for st in res["steps"]:
+                print(f"  [{st['status']:>7}] {st['name']}: {st['detail']}")
+            return 0 if res["status"] != "error" else 1
+        if args.cmd == "sectors":
+            print(ctx.fill_sectors(only_missing=False) or "SEC_USER_AGENT not configured")
+            return 0
         if args.cmd == "import-data":
             res = ctx.refresh_data(full=args.full)
             print(f"import #{res['id']}: {res['status']}, {res['bars_loaded']} bars, coverage "

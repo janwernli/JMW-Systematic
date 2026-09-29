@@ -15,8 +15,8 @@ from app.strategy.config import StrategyConfig
 from .helpers import FixtureProvider, weekday_calendar
 
 CAL = weekday_calendar("2020-01-01", 130)
-CFG = StrategyConfig(mode="long_only", lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3, min_adv_usd=0,
-                     min_price=1, slippage_bps=10, top_n=2, initial_capital=100_000)
+CFG = StrategyConfig(signal="momentum_12_1", htb_exclude_pct=0.0, sector_neutral=False, crash_guard=False, borrow_fee_annual=0.0, short_min_price=0, min_names_per_side=1, max_names_per_side=1, vol_lookback_sessions=20, beta_lookback_sessions=60, max_long_weight=1.0, max_short_weight=1.0, lookback_sessions=10, skip_sessions=2, min_history_sessions=10, adv_window=3, min_adv_usd=0,
+                     min_price=1, slippage_bps=10, initial_capital=100_000)
 
 
 def fixture_provider():
@@ -102,11 +102,11 @@ def test_config_change_affects_only_future_plans(setup):
     led.initialize(CFG, inception_session="2020-01-31")
     led.advance(auto_apply=True, until="2020-03-10")
     fills_before = db.query("SELECT * FROM paper_fills ORDER BY id")
-    led.update_config(CFG.model_copy(update={"top_n": 1}))
+    led.update_config(CFG.model_copy(update={"max_names_per_side": 2, "min_names_per_side": 2}))
     led.advance(auto_apply=True, until="2020-04-10")
     assert db.query("SELECT * FROM paper_fills WHERE id<=? ORDER BY id", (fills_before[-1]["id"],)) == fills_before
     mar = db.query_one("SELECT signal_set_id FROM rebalance_plans WHERE signal_session='2020-03-31'")
-    assert db.scalar("SELECT COUNT(*) FROM signal_rows WHERE set_id=? AND selected=1", (mar["signal_set_id"],)) == 1
+    assert db.scalar("SELECT COUNT(*) FROM signal_rows WHERE set_id=? AND selected=1", (mar["signal_set_id"],)) == 4
 
 
 def test_cash_ledger_reconciles(setup):

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from ..strategy.config import StrategyConfig
 
-DataLabel = Literal["Demo Data", "Delayed Market Data", "Backtest", "Paper Simulation"]
+DataLabel = Literal["Delayed Market Data", "End-of-Day Market Data", "Backtest", "Paper Simulation", "Alpaca Paper"]
 
 
 class ApiError(BaseModel):
@@ -46,7 +46,7 @@ class MarketClock(BaseModel):
 
 class SystemStatus(BaseModel):
     app_version: str
-    mode: Literal["demo", "live"]
+    mode: Literal["live"]
     data_label: str
     provider: ProviderInfoModel | None
     provider_error: str | None
@@ -126,8 +126,15 @@ class UniverseRow(BaseModel):
     reason: str
     reason_text: str
     selected: bool
+    score: float | None = None
+    resid_mom: float | None = None
+    sector_mom: float | None = None
+    fip: float | None = None
+    composite: float | None = None
     side: str | None = Field(None, description="long | short | None in this live ranking")
     percentile: float | None = None
+    composite: float | None = None
+    sector: str | None = None
     vol: float | None = None
     beta: float | None = None
     model_weight: float = Field(description="Signed target weight in this live ranking (negative = short)")
@@ -464,6 +471,7 @@ class PlanDetail(PlanSummary):
 class ResearchDefaults(BaseModel):
     data_label: str
     config: StrategyConfig
+    config_warnings: list[str] = []
     earliest_start: str
     latest_end: str
     benchmark_symbol: str | None
