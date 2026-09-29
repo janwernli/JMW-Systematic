@@ -462,3 +462,11 @@ def preopen_marks(panel: Panel, t: int, symbols) -> dict[str, float]:
         if j is not None and not np.isnan(panel.mark[t - 1, j]):
             out[s] = float(panel.mark[t - 1, j] / panel.split_ratio[t, j] - panel.dividend[t, j])
     return out
+
+
+def cash_interest(panel: Panel, t: int, cash: float, annual_rate: float) -> float:
+    """Interest credited at session t's close on positive cash: cash x rate / 360 x calendar days since the
+    previous session (ACT/360, same convention as the borrow fee)."""
+    if cash <= 0 or annual_rate <= 0:
+        return 0.0
+    return r2(cash * annual_rate / 360 * accrual_days(panel, t))

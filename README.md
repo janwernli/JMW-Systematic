@@ -136,7 +136,13 @@ The cycle is idempotent, so running it several times a day is safe.
    - A long-to-short flip is split: close now, open at the next run. Alpaca rejects flipping a position in one order.
    - New shorts require Alpaca's `shortable` and `easy_to_borrow` flags; otherwise they are skipped and recorded.
    - Orders that expired unfilled are retried.
-6. **Submit.** Orders are sent only when **all** of these hold: `BROKER_TRADING_ENABLED=true`, the dashboard's automation switch is ON, the data is fresh, and the run is not a dry run.
+6. **Approval.** Set on the Alpaca Paper page:
+   - **Auto** (default): rebalance orders are sent automatically.
+   - **Manual**: rebalance and catch-up orders wait as *awaiting approval* until you click **Approve & send** or **Decline**.
+     - Approving marks the orders and immediately runs a cycle. They are sent right away if it is 19:00–09:28 ET, otherwise at the next scheduled run.
+     - Declined orders are never regenerated for that plan.
+     - **Stop-loss covers are always automatic.**
+7. **Submit.** Orders are sent only when **all** of these hold: `BROKER_TRADING_ENABLED=true`, the dashboard's automation switch is ON, the data is fresh, and the run is not a dry run.
    - Between **19:00 and 09:28 ET** they are sent as market-on-open orders (opening auction).
    - If that window was missed but the fill session is trading, they are sent as a regular market order, flagged as late.
    - Otherwise they stay planned for the next run.
@@ -186,21 +192,32 @@ In the **Research Lab**:
 
 1. Pick **Composite signal** or **Plain 12-1**. Adjust books, sizing, sector neutrality, the hard-to-borrow screen and short-risk parameters.
 2. Click **Run backtest**. Tick 2–4 saved runs to compare them.
-3. Open the **Factor alpha** tab. It regresses the run's monthly returns minus RF on the **Fama-French 5 factors (2×3) + momentum**:
+3. Open the **Factor alpha** tab. It regresses the run's monthly returns on the **Fama-French 5 factors (2×3) + momentum**:
+   - **Cash interest.** The dependent variable follows the cash assumption.
+     - By default, backtest cash (including short proceeds) earns **no interest**, so the raw return r is used and RF is **not** subtracted. Subtracting RF would charge the strategy for interest it never received.
+     - With **Cash earns RF** on (`cash_interest`), positive cash is credited the Ken French RF, per calendar day on ACT/360. The regression then uses r − RF.
+     - The model ledger credits the same interest, so it stays identical to the backtest.
    - Factors come from the Kenneth R. French Data Library, downloaded and cached weekly under `data/factors/`.
    - Results show alpha (monthly × 12), **Newey-West t-stats** (Bartlett kernel, lag = ⌊4·(T/100)^(2/9)⌋), all factor betas and R².
    - This is reported for the full sample and for each half (each half needs at least 24 months).
    - The first month is dropped because it is partial. Months not yet published by the library are excluded and noted.
 
-**Results on the current Alpaca data (2017-01 → 2026-09, default settings).** These are illustrations only; see Limitations.
+**Results on the current Alpaca data (2017-01 → 2026-09).** These are illustrations only; see Limitations.
 
 | | Composite | Plain 12-1 |
 |---|---|---|
-| Net CAGR / vol / max DD | 4.1% / 8.3% / −14.1% | 3.5% / 8.3% / −12.4% |
+| Net CAGR / vol, cash earns nothing | 4.1% / 8.3% | 3.5% / 8.3% |
+| Net CAGR, cash earns RF | 6.7% | 6.4% |
 | Realized beta to SPY | 0.00 | −0.01 |
-| Alpha (FF5 + Mom), full sample | +0.7%/yr, t = 0.5 | +0.1%/yr, t = 0.1 |
-| Alpha, 1st half / 2nd half | −3.3% (t −2.1) / +4.8% (t 2.5) | −2.8% (t −1.4) / +2.7% (t 1.2) |
+| Alpha (FF5 + Mom), full sample | +3.1%/yr, t = 2.1 | +2.5%/yr, t = 1.6 |
+| Alpha, 1st half / 2nd half | −2.1% (t −1.4) / +8.4% (t 4.7) | −1.7% (t −0.9) / +6.3% (t 3.0) |
 | Momentum-factor loading | 0.34 (t 7) | 0.35 (t 7) |
+
+The alpha is essentially the same whether cash earns RF (regressing r − RF) or not (regressing r): +3.08% vs +3.11% for the composite. That shows the two conventions are consistent.
+
+An earlier version subtracted RF although cash earned nothing, which understated alpha by roughly RF (about 2.4%/yr on average over the sample).
+
+A full-sample t-stat near 2, entirely from the second half, on a survivorship-biased universe, is weak evidence.
 
 ## 8. Strategy rules
 
@@ -221,8 +238,9 @@ These are the defaults; everything is adjustable in the Research Lab. The live/m
 | Beta neutral | Short gross = long gross × β_long / β_short. Betas use 252 sessions vs SPY, shrunk 33% toward 1 (β = 1 if history is too short). |
 | Vol target | 10% ex-ante (trailing 126-session returns of the proposed book). Bounded to 50–75% gross per side and 150% total. |
 | **Sector neutral** | \|long − short\| ≤ 2% of NAV per sector (11 sectors from SEC SIC). A quadratic program (SciPy SLSQP, with an exact LP feasibility check) stays as close as possible to the inverse-vol weights while keeping gross, beta neutrality and caps. If caps make that impossible, **gross is reduced** and reported. Unclassified stocks are unconstrained. |
-| Crash guard | If SPY's 24-month return < 0 and its 6-month realized vol > 20%, the short book is multiplied by 0.5. |
-| Costs (assumed) | 10 bps slippage, $0 commission. **Borrow fee 0.5%/yr accrued per calendar day (ACT/360)**; Monday pays for the weekend. Short proceeds earn 0%. |
+| Crash guard | If SPY's 24-month return < 0 and its 6-month realized vol > 20%, the short book is multiplied by 0.5. This is applied **before** sector neutralization, so the ±2% sector limits hold for the book actually traded. With the guard on, those limits therefore cap how net-long the book can become. The final per-sector nets, after the guard, are reported with every plan. |
+| Costs (assumed) | 10 bps slippage, $0 commission. **Borrow fee 0.5%/yr accrued per calendar day (ACT/360)**; Monday pays for the weekend. |
+| Cash | By default cash, including short proceeds, earns nothing. Optionally (`cash_interest`), it earns the Ken French RF (monthly RF × 12, ACT/360). Unpublished recent months carry the latest value forward, with a warning. |
 | Stop-loss | Short close ≥ 1.5 × average entry → cover at the next open. No re-short until the next signal. |
 | **Capacity warning** | If `min_names_per_side × max_short_weight < max_side_gross` (or the long equivalent), the config emits a `ConfigWarning`. The warning is shown in the UI, plan checks and run diagnostics: the per-name caps can prevent the vol target from being reached. |
 
@@ -233,7 +251,7 @@ These are the defaults; everything is adjustable in the Research Lab. The live/m
 1. Pre-open: splits and dividends. Shorts pay dividends and split fractions.
 2. Open: stop-loss covers, then the rebalance. Order of trades: reduce longs → short sales → covers → buys in rank order.
 3. Close: delisting close-outs.
-4. Close: borrow fee (ACT/360), then mark to market. NAV = cash + long value + short value, where short value is negative.
+4. Close: cash interest (optional, RF, ACT/360; none on the funding session), borrow fee (ACT/360), then mark to market. NAV = cash + long value + short value, where short value is negative.
 5. Close: stop-loss checks.
 6. Month-end: freeze the signal and create the plan.
 
@@ -262,7 +280,7 @@ These are the defaults; everything is adjustable in the Research Lab. The live/m
   - Long-winner backtests are strongly inflated: an earlier long-only run on this data showed +2,798%.
   - The short book is biased the other way, because only losers that survived are in the data.
   - Treat all historical results on this data as illustrations. Use Norgate (section 11) for an unbiased study.
-- **SEC SIC sectors** are current codes, not point-in-time. The SIC → sector mapping is approximate; for example, SIC 7370 puts Alphabet and Meta in Information Technology.
+- **SEC SIC sectors** (Alpaca provider) are current codes, not point-in-time. The SIC → sector mapping is approximate; for example, SIC 7370 puts Alphabet and Meta in Information Technology. The Norgate provider uses Norgate's GICS instead.
 - **The hard-to-borrow screen** in backtests is a liquidity stand-in. Real borrow availability, recalls, locates and hard-to-borrow fees are not modelled. Live orders check Alpaca's easy-to-borrow flag instead.
 - **Costs are assumptions.** Opening-auction liquidity, market impact and interest on short proceeds are not modelled.
 - **Sizes are small.** With $100k and 50–100 names per side, many positions are only a few shares, so rounding noise is noticeable.
@@ -282,6 +300,7 @@ What it provides:
 
 - The **Russell 1000 Current & Past** watchlist, including delisted stocks.
 - Unadjusted bars. Splits are derived from capital-adjusted vs unadjusted closes, and dividends come from the Dividend column.
+- **Sectors from Norgate's own GICS classification.** This uses `classification_at_level(symbol, "GICS", "Name", 1)` for every symbol, including delisted ones, which keep their last classification. Legacy names such as "Telecommunication Services" are mapped to today's 11 sectors. SEC EDGAR is only used with the Alpaca provider.
 - **Point-in-time index membership intervals**, which drive eligibility (`not_in_index`). The survivorship warning disappears.
 
 Tell the scheduler which provider to trade on by keeping `MARKET_DATA_PROVIDER` set. Paper orders still go to Alpaca, and symbols are matched by ticker.
@@ -322,7 +341,7 @@ npm test              # backend pytest suite + frontend type-check
 npm run test:backend
 ```
 
-There are 127 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
+There are 136 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
 
 - **Composite signal:** winsorizing, the FIP arithmetic, residual momentum rewarding recent idiosyncratic drift but not beta, sector demeaning, and ranking by composite vs 12–1.
 - **Books and sizing:** the hard-to-borrow screen, the sector-neutral QP (limits, gross, beta, caps, and the reduced-gross fallback), the capacity warning, and loading of legacy configs.
@@ -330,6 +349,7 @@ There are 127 backend tests, built on constructed datasets with hand-checkable r
 - **Costs:** ACT/360 borrow fees.
 - **Alpha test:** Ken French parsing and Newey-West (matches OLS and White's estimator at lag 0), plus the full/half-sample alpha test.
 - **Automation:** opening-auction submission sized from equity, idempotency, dry run, both kill switches, stale-data blocking, stop-loss on actual shorts, flip splitting, the submission-window rules, and the paper-host lock.
+- **Follow-ups:** ACT/360 cash interest, the model ledger matching the backtest with interest on, the alpha regression matching the cash treatment, Norgate GICS sectors (including delisted symbols and legacy names), SEC not being used for Norgate, final sector nets after the crash guard, and manual approval (rebalances held but stops sent, approve sends, decline is final).
 
 ## 14. Git and GitHub
 

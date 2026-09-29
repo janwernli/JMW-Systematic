@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ...automation import get_setting, set_setting
@@ -61,6 +61,8 @@ class BrokerOverview(BaseModel):
     last_runs: list[AutomationRun]
     schedule_note: str
     open_orders: int
+    approval_mode: str
+    awaiting_approval: list["BrokerOrder"]
 
 
 class BrokerOrder(BaseModel):
@@ -82,8 +84,12 @@ class BrokerOrder(BaseModel):
     filled_avg_price: float | None
     filled_at: str | None
     submitted_at: str | None
+    approved_at: str | None = None
     created_at: str
     updated_at: str
+
+
+BrokerOverview.model_rebuild()
 
 
 class BrokerOrdersPage(BaseModel):
@@ -156,6 +162,10 @@ def overview(ctx: AppContext = Depends(get_ctx)):
                           "Install with `npm run schedule:install`."),
         "open_orders": ctx.db.scalar("SELECT COUNT(*) FROM broker_orders WHERE status IN ('submitted','new','accepted',"
                                      "'pending_new','partially_filled','held')") or 0,
+        "approval_mode": get_setting(ctx.db, "rebalance_approval", "auto"),
+        "awaiting_approval": ctx.db.query(
+            "SELECT * FROM broker_orders WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up')"
+            " AND status_reason LIKE 'awaiting approval%' ORDER BY plan_id, side, symbol"),
     }
 
 
@@ -169,6 +179,57 @@ def orders(limit: int = Query(100, le=2000), offset: int = 0, ctx: AppContext = 
 @router.get("/automation/runs", response_model=list[AutomationRun])
 def runs(limit: int = Query(50, le=500), ctx: AppContext = Depends(get_ctx)):
     return [_run_row(r) for r in ctx.db.query("SELECT * FROM automation_runs ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+class ApprovalModeRequest(BaseModel):
+    mode: str
+
+
+@router.put("/automation/approval")
+def approval_mode(req: ApprovalModeRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """'auto': rebalances are sent automatically. 'manual': they wait for approval (stop-losses stay automatic)."""
+    if req.mode not in ("auto", "manual"):
+        raise HTTPException(400, "mode must be 'auto' or 'manual'")
+    set_setting(ctx.db, "rebalance_approval", req.mode)
+    return {"approval_mode": req.mode}
+
+
+class DecisionRequest(BaseModel):
+    plan_id: int | None = None
+
+
+@router.post("/broker/approve")
+def approve(req: DecisionRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Approve all orders awaiting approval (optionally for one plan), then run a cycle to send them."""
+    from ...db import log_event, utcnow
+
+    with ctx.db.transaction() as conn:
+        n = conn.execute(
+            "UPDATE broker_orders SET approved_at=?, status_reason=REPLACE(status_reason, 'awaiting approval: ', 'approved: '),"
+            " updated_at=? WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up')"
+            + (" AND plan_id=?" if req.plan_id else ""),
+            (utcnow(), utcnow(), *([req.plan_id] if req.plan_id else []))).rowcount
+        log_event(conn, "warning", "broker", f"User approved {n} rebalance order(s)"
+                  + (f" for plan #{req.plan_id}" if req.plan_id else ""))
+    started = run_now(AutomationRunRequest(dry_run=False), ctx) if n else {"started": False}
+    return {"approved": n, "cycle_started": started.get("started", False),
+            "message": f"{n} order(s) approved" + ("; sending now if inside the 19:00-09:28 ET window, otherwise at the "
+                                                    "next scheduled run" if n else "")}
+
+
+@router.post("/broker/decline")
+def decline(req: DecisionRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+    """Decline all orders awaiting approval (optionally for one plan). Declined orders are not regenerated."""
+    from ...db import log_event, utcnow
+
+    with ctx.db.transaction() as conn:
+        n = conn.execute(
+            "UPDATE broker_orders SET status='declined', status_reason='declined by user', updated_at=? "
+            "WHERE status='planned' AND approved_at IS NULL AND origin IN ('rebalance','catch_up')"
+            + (" AND plan_id=?" if req.plan_id else ""), (utcnow(), *([req.plan_id] if req.plan_id else []))).rowcount
+        log_event(conn, "warning", "broker", f"User declined {n} rebalance order(s)"
+                  + (f" for plan #{req.plan_id}" if req.plan_id else ""))
+    return {"declined": n}
 
 
 class ToggleRequest(BaseModel):

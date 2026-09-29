@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Alert, Badge, Button, Group, Modal, Stack, Switch, Text, Tooltip } from "@mantine/core";
+import { Alert, Badge, Button, Group, Modal, SegmentedControl, Stack, Switch, Text, Tooltip } from "@mantine/core";
 import { IconPlayerPlay, IconRobot, IconTestPipe } from "@tabler/icons-react";
 import { useAutomationMutations, useAutomationRuns, useBrokerOrders, useBrokerOverview } from "../api/hooks";
 import type { S } from "../api/client";
@@ -20,6 +20,7 @@ export function Trading() {
   const runs = useAutomationRuns();
   const m = useAutomationMutations();
   const [confirmLive, setConfirmLive] = useState(false);
+  const [confirmApprove, setConfirmApprove] = useState(false);
   if (isLoading) return <div className="page"><Loading what="Alpaca paper account" /></div>;
   if (error || !data) return <div className="page"><ErrorView error={error} retry={refetch} /></div>;
   const a = data.account;
@@ -57,6 +58,13 @@ export function Trading() {
               <Switch checked={data.automation_enabled} onChange={(e) => m.toggle.mutate(e.currentTarget.checked)}
                 label={data.automation_enabled ? "ON" : "OFF"} color="teal" />
             </Group>
+            <Group justify="space-between">
+              <Tooltip multiline w={300} label="Auto: month-end rebalance orders are sent automatically. Manual: they wait for your approval here. Stop-loss covers are always automatic.">
+                <Text size="xs">Rebalance approval</Text>
+              </Tooltip>
+              <SegmentedControl size="xs" value={data.approval_mode} onChange={(v) => m.approvalMode.mutate(v as "auto" | "manual")}
+                data={[{ value: "auto", label: "Auto" }, { value: "manual", label: "Manual" }]} />
+            </Group>
             <KV rows={[
               ["BROKER_TRADING_ENABLED (.env)", data.trading_enabled_env ? <span className="up">true</span> : <span className="warn">false</span>],
               ["Orders will be sent", trading ? <span className="up">yes, automatically</span> : <span className="warn">no (planned only)</span>],
@@ -79,6 +87,30 @@ export function Trading() {
             <Kpi label="Shorting" value={a?.shorting_enabled ? "enabled" : "disabled"} sub={String(a?.status ?? "")} />
           </div>
         </div>
+
+        {data.awaiting_approval.length > 0 && (
+          <Panel className="span-12" title={`Awaiting your approval (${data.awaiting_approval.length} orders)`} label="Alpaca Paper" pad={false}
+            source="Manual approval mode: these month-end rebalance orders were computed from the frozen signal and your account equity. Approve to send them (market-on-open between 19:00 and 09:28 ET, otherwise at the next run), or decline to skip this rebalance."
+            right={
+              <Group gap={6}>
+                <Button size="compact-xs" color="teal" onClick={() => setConfirmApprove(true)}>Approve &amp; send</Button>
+                <Button size="compact-xs" variant="default" loading={m.decline.isPending} onClick={() => m.decline.mutate(null)}>Decline</Button>
+              </Group>
+            }>
+            <DataTable<S["BrokerOrder"]> data={data.awaiting_approval} maxHeight={300}
+              cols={[
+                { id: "plan", header: "Plan", value: (r) => r.plan_id, cell: (r) => `#${r.plan_id}` },
+                { id: "sym", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
+                { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "buy" ? "blue" : "orange"}>{r.side}</Badge> },
+                { id: "eff", header: "Effect", value: (r) => r.position_effect, cell: (r) => (r.position_effect ?? "").replace("_", " ") },
+                { id: "qty", header: "Qty", align: "right", value: (r) => r.qty },
+                { id: "ref", header: "Signal close", align: "right", value: (r) => r.ref_price, cell: (r) => fmtPx(r.ref_price) },
+                { id: "val", header: "≈ Value", align: "right", value: (r) => (r.ref_price ?? 0) * r.qty, cell: (r) => fmtUsd((r.ref_price ?? 0) * r.qty) },
+                { id: "for", header: "For session", value: (r) => r.intended_session },
+                { id: "why", header: "Reason", value: (r) => r.status_reason, cell: (r) => <Text size="10px" c="dimmed" truncate maw={420}>{r.status_reason}</Text> },
+              ]} />
+          </Panel>
+        )}
 
         <Panel className="span-12" title="Equity: Alpaca paper vs model vs SPY" label="Alpaca Paper"
           source="Alpaca's daily account equity (portfolio history), the internal model ledger's NAV (theoretical fills at the open ± slippage), and SPY's total-return index rebased to the starting equity.">
@@ -130,6 +162,21 @@ export function Trading() {
           <OrdersTable />
         </Panel>
       </div>
+
+      <Modal opened={confirmApprove} onClose={() => setConfirmApprove(false)} title="Approve the rebalance" centered>
+        <Stack gap={8}>
+          <Alert color="teal" variant="light">
+            {data.awaiting_approval.length} order(s) will be sent to your Alpaca PAPER account (no real money): immediately as
+            market-on-open orders if it is between 19:00 and 09:28 ET, otherwise at the next scheduled run.
+          </Alert>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setConfirmApprove(false)}>Cancel</Button>
+            <Button color="teal" loading={m.approve.isPending} onClick={() => m.approve.mutate(null, { onSuccess: () => setConfirmApprove(false) })}>
+              Approve &amp; send
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
       <Modal opened={confirmLive} onClose={() => setConfirmLive(false)} title="Run the daily cycle now" centered>
         <Stack gap={8}>

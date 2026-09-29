@@ -11,12 +11,17 @@ Requires a Norgate Data subscription with the Norgate Data Updater (NDU) running
   norgatedata.index_constituent_timeseries(sym, "Russell 1000", padding_setting=..., start_date=...,
                                timeseriesformat="pandas-dataframe")    -> column "Index Constituent" (1/0)
   norgatedata.security_name(sym), norgatedata.last_quoted_date(sym)
+  norgatedata.classification_at_level(sym, "GICS", "Name", 1)          -> GICS sector name (also for delisted
+                                                                            securities: their last classification)
 
 Mapping into this app's model (raw bars + explicit corporate actions):
   * bars          = unadjusted OHLCV (StockPriceAdjustmentType.NONE)
   * cash dividends = the "Dividend" column of the unadjusted series (ex-date, per share)
   * splits        = changes in F_t = CapitalAdjustedClose_t / UnadjustedClose_t; ratio at s = F_s / F_{s-1}
   * membership    = runs of Index Constituent == 1 -> (start, end) intervals, used for point-in-time eligibility
+  * sectors       = Norgate GICS level 1 (sector) for every symbol incl. delisted ones; legacy GICS names are mapped
+                    to today's 11 sectors (e.g. "Telecommunication Services" -> "Communication Services").
+                    SEC EDGAR is NOT used with this provider.
 
 NOT verified against a live Norgate installation in this repository (no subscription available); the
 mapping logic is unit-tested with a simulated `norgatedata` module.
@@ -34,6 +39,20 @@ from .alpaca_provider import BENCHMARK, SECTOR_ETFS
 from .provider import ACTION_COLUMNS, BAR_COLUMNS, InstrumentRecord, MarketDataProvider, ProviderError, ProviderInfo
 
 log = logging.getLogger(__name__)
+
+GICS_SECTORS = {
+    "Communication Services", "Consumer Discretionary", "Consumer Staples", "Energy", "Financials", "Health Care",
+    "Industrials", "Information Technology", "Materials", "Real Estate", "Utilities",
+}
+_LEGACY_GICS = {"Telecommunication Services": "Communication Services",
+                "Telecommunications Services": "Communication Services", "Telecommunications": "Communication Services"}
+
+
+def normalize_gics_sector(name) -> str | None:
+    if not isinstance(name, str) or not name.strip():
+        return None
+    n = _LEGACY_GICS.get(name.strip(), name.strip())
+    return n if n in GICS_SECTORS else None
 
 
 def _load_norgate():
@@ -84,6 +103,16 @@ class NorgateProvider(MarketDataProvider):
             self._unadj[key] = self._series(symbol, "NONE", start, end)
         return self._unadj[key]
 
+    def gics_sector(self, symbol: str) -> str | None:
+        fn = getattr(self.nd, "classification_at_level", None)
+        if fn is None:
+            return None
+        try:
+            return normalize_gics_sector(fn(symbol, "GICS", "Name", 1))
+        except Exception as e:  # noqa: BLE001 - a missing classification must not break the import
+            log.warning("GICS classification unavailable", extra={"symbol": symbol, "error": str(e)})
+            return None
+
     # ------------------------------------------------------------------ interface
     def list_instruments(self, symbols: list[str] | None = None) -> list[InstrumentRecord]:
         nd = self.nd
@@ -95,9 +124,11 @@ class NorgateProvider(MarketDataProvider):
             last = getattr(nd, "last_quoted_date", lambda _s: None)(s)
             last = pd.Timestamp(last).strftime("%Y-%m-%d") if last is not None and not pd.isna(last) else None
             delisted = last is not None and (datetime.now(UTC) - pd.Timestamp(last).tz_localize(UTC)).days > 10
+            sector = None if ref else self.gics_sector(s)
             out.append(InstrumentRecord(
                 symbol=s, name=str(name), exchange=None, asset_type="etf" if ref else "common_stock",
                 asset_type_source="Norgate index constituent (common stock)" if not ref else "reference ETF",
+                sector=sector, sector_source="Norgate GICS level 1 (sector)" if sector else None,
                 is_benchmark=s == BENCHMARK, delist_date=last if delisted else None, active=not delisted,
                 metadata={"role": "benchmark" if s == BENCHMARK else "sector_etf" if ref else "universe",
                           "watchlist": self.watchlist},

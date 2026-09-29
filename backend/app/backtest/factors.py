@@ -88,8 +88,33 @@ def newey_west_ols(y: np.ndarray, X: np.ndarray, lags: int | None = None) -> dic
             "lags": lags, "n": T}
 
 
-def alpha_test(monthly: list[dict], factors: pd.DataFrame) -> dict:
-    """monthly: [{'year','month','return'}] strategy returns (decimal)."""
+class RateSource:
+    """Annualized risk-free rate per session from the monthly Ken French RF (monthly RF x 12).
+
+    Months not yet published (library lag) use the latest available month and are recorded in `carried`."""
+
+    def __init__(self, factors: pd.DataFrame):
+        rf = factors["RF"].dropna()
+        self.by_month = {k: float(v) * 12 for k, v in rf.items()}
+        self.last_month = max(self.by_month)
+        self.carried: set[str] = set()
+
+    def annual(self, session: str) -> float:
+        key = session[:4] + session[5:7]
+        if key in self.by_month:
+            return self.by_month[key]
+        if key > self.last_month:
+            self.carried.add(key)
+            return self.by_month[self.last_month]
+        return 0.0
+
+
+def alpha_test(monthly: list[dict], factors: pd.DataFrame, excess: bool = False) -> dict:
+    """monthly: [{'year','month','return'}] strategy returns (decimal).
+
+    excess=True (cash earns RF in the backtest): dependent variable r - RF.
+    excess=False (cash earns nothing): dependent variable r, because subtracting RF would charge the strategy for
+    interest it never received."""
     s = pd.Series({f"{m['year']:04d}{m['month']:02d}": m["return"] for m in monthly}).iloc[1:]  # drop first month
     df = pd.DataFrame({"r": s}).join(factors, how="inner").dropna()
     notes = []
@@ -99,7 +124,7 @@ def alpha_test(monthly: list[dict], factors: pd.DataFrame) -> dict:
     def fit(sub: pd.DataFrame) -> dict | None:
         if len(sub) < 24:
             return None
-        y = (sub["r"] - sub["RF"]).to_numpy()
+        y = (sub["r"] - sub["RF"]).to_numpy() if excess else sub["r"].to_numpy()
         X = np.column_stack([np.ones(len(sub))] + [sub[f].to_numpy() for f in FACTORS])
         r = newey_west_ols(y, X)
         return {
@@ -113,7 +138,11 @@ def alpha_test(monthly: list[dict], factors: pd.DataFrame) -> dict:
 
     half = len(df) // 2
     return {
-        "model": "Fama-French 5 factors (2x3) + momentum; dependent variable = strategy return - RF; Newey-West t-stats",
+        "model": "Fama-French 5 factors (2x3) + momentum; dependent variable = "
+                 + ("strategy return - RF (cash earns RF in this backtest)" if excess
+                    else "strategy return (cash earns no interest in this backtest, so RF is not subtracted)")
+                 + "; Newey-West t-stats",
+        "excess_returns": excess,
         "source": "Kenneth R. French Data Library (" + ", ".join(FILES.values()) + ")",
         "full": fit(df), "first_half": fit(df.iloc[:half]), "second_half": fit(df.iloc[half:]),
         "notes": notes + (["Each half needs at least 24 months; shorter samples are not estimated."] if half < 24 else []),

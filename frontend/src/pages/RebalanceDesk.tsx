@@ -26,7 +26,7 @@ type Diag = {
   vol_target?: number; ex_ante_vol?: number; binding?: string[]; notes?: string[]; cap_capacity?: number[];
   max_long_weight?: number; max_short_weight?: number; htb_excluded?: number; htb_adv_threshold?: number | null;
   sector_neutrality?: { enabled: boolean; applied: boolean; status: string; max_abs_net: number | null; gross_reduced?: boolean;
-    sector_net?: Record<string, number> };
+    sector_net?: Record<string, number>; final_sector_net?: Record<string, number>; final_max_abs_net?: number | null };
   composite?: { coverage?: Record<string, number> };
   crash_guard?: { enabled: boolean; active: boolean; market_return: number | null; market_vol: number | null };
 };
@@ -246,18 +246,23 @@ function Sizing({ d, est, cfg }: { d: Diag; est: Estimate; cfg: StrategyConfig }
           tip="Short gross = long gross × β_long / β_short, so the book's ex-ante beta is zero (unless the crash guard scales the shorts down)." />
         <Kpi label="Ex-ante vol" value={fmtPct(d.ex_ante_vol, 1)} sub={`target ${fmtPct(d.vol_target, 0)} · unit ${fmtPct(d.unit_vol, 0)}`}
           tip="Annualized stdev of the proposed portfolio's trailing 126-session daily returns." />
-        <Kpi label="Sector neutral" value={d.sector_neutrality?.applied ? `±${fmtPct(d.sector_neutrality.max_abs_net, 1)}` : d.sector_neutrality?.enabled ? "not applied" : "off"}
-          sub={d.sector_neutrality?.status ?? ""} tip="Max |long − short| weight per sector after the sector-neutrality QP (limit from config)." />
+        <Kpi label="Max sector net" value={d.sector_neutrality?.final_max_abs_net != null ? `±${fmtPct(d.sector_neutrality.final_max_abs_net, 2)}` : "—"}
+          sub={d.sector_neutrality?.status ?? ""}
+          tip="Largest |long − short| weight in any classified sector in the FINAL book (after the crash guard and the sector-neutrality QP)." />
         <Kpi label="HTB screen" value={`${d.htb_excluded ?? 0} excl.`} sub={d.htb_adv_threshold ? `60d ADV < $${(d.htb_adv_threshold / 1e6).toFixed(1)}M` : "—"}
           tip="Least liquid 20% of eligible stocks by 60-day dollar volume are never shorted (hard-to-borrow stand-in)." />
         <Kpi label="Crash guard" value={cg?.active ? "ON" : cg?.enabled ? "off" : "disabled"}
           sub={`mkt 24m ${cg?.market_return == null ? "n/a" : fmtPct(cg.market_return, 1, true)} · 6m vol ${cg?.market_vol == null ? "n/a" : fmtPct(cg.market_vol, 0)}`} />
       </div>
-      {(d.binding?.length || d.notes?.length || est.stopped_shorts_excluded?.length) ? (
+      {(d.binding?.length || d.notes?.length || est.stopped_shorts_excluded?.length || d.sector_neutrality?.final_sector_net) ? (
         <Stack gap={2} mt={6}>
           {d.binding?.map((b, i) => <Text key={`b${i}`} size="10px" c="yellow.5">• Binding: {b}</Text>)}
           {d.notes?.filter((n) => !d.binding?.includes(n)).map((n, i) => <Text key={`n${i}`} size="10px" c="dimmed">• {n}</Text>)}
           {est.stopped_shorts_excluded?.length ? <Text size="10px" c="dimmed">• Not re-shorted after stop-loss: {est.stopped_shorts_excluded.join(", ")}</Text> : null}
+          {d.sector_neutrality?.final_sector_net && (
+            <Text size="10px" c="dimmed">• Final sector nets: {Object.entries(d.sector_neutrality.final_sector_net)
+              .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).map(([k, v]) => `${k} ${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`).join(" · ")}</Text>
+          )}
         </Stack>
       ) : null}
     </Panel>

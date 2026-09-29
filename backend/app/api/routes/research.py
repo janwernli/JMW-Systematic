@@ -152,7 +152,9 @@ def run_alpha(run_id: int, ctx: AppContext = Depends(get_ctx)) -> dict:
         factors = load_factors(REPO_ROOT / "data" / "factors")
     except Exception as e:  # noqa: BLE001
         raise HTTPException(503, f"Could not load Ken French factor data: {e}") from e
-    return alpha_test([{"year": m["year"], "month": m["month"], "return": m["strategy"]} for m in months], factors)
+    cfg = StrategyConfig.model_validate_json(_get(ctx, run_id)["config_json"])
+    return alpha_test([{"year": m["year"], "month": m["month"], "return": m["strategy"]} for m in months], factors,
+                      excess=cfg.cash_interest)
 
 
 @router.get("/runs/{run_id}/rebalances", response_model=list[RunRebalance])

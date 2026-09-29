@@ -11,6 +11,8 @@ any number of times per day.
                and the signal close) for up to 5 sessions after the signal; flips are split into
                close-now / open-next-run; new shorts require Alpaca's easy-to-borrow flag
   6. SUBMIT    only if BROKER_TRADING_ENABLED=true AND automation is switched on AND data is fresh.
+               Approval mode "manual": rebalance/catch-up orders wait as planned ("awaiting approval") until
+               approved on the Trading page; stop-loss covers are always automatic.
                Inside 19:00-09:28 ET: market-on-open ("opg"); during the fill session's regular
                hours: market "day" order (late, flagged); otherwise orders stay planned for the next run.
 
@@ -265,6 +267,8 @@ class DailyCycle:
             if sym in skip:
                 continue
             st = prior.get(sym, [])
+            if "declined" in st:
+                continue  # the user declined this plan's order for the symbol: no retries for this plan
             if any(s in PENDING for s in st):
                 continue  # an order for this plan is still working at the broker
             st = [s for s in st if s not in ("planned", "expired_unsent")]  # unsent drafts are re-planned in place
@@ -297,6 +301,8 @@ class DailyCycle:
     def _submit(self, orders: list[dict], now: datetime, next_s: str, clock_open: bool | None, dry_run: bool) -> Step:
         st = Step("orders")
         enabled = self.ctx.settings.broker_trading_enabled and get_setting(self.db, "automation_enabled", "true") == "true"
+        manual = get_setting(self.db, "rebalance_approval", "auto") == "manual"
+        awaiting = 0
         tif, how = submission_mode(now, next_s, clock_open)
         sent = skipped = planned = 0
         for o in orders:
@@ -308,10 +314,12 @@ class DailyCycle:
                         status, reason = "skipped", "not easy-to-borrow at Alpaca; short not opened"
                 except BrokerError as e:
                     status, reason = "skipped", f"asset check failed: {e}"
-            if self.db.scalar("SELECT 1 FROM broker_orders WHERE client_order_id=?", (o["cid"],)):
-                row = self.db.query_one("SELECT status FROM broker_orders WHERE client_order_id=?", (o["cid"],))
-                if row["status"] != "planned":
-                    continue
+            row = self.db.query_one("SELECT status, approved_at FROM broker_orders WHERE client_order_id=?", (o["cid"],))
+            if row and row["status"] not in ("planned", "skipped", "expired_unsent"):
+                continue
+            needs_approval = manual and o["origin"] in ("rebalance", "catch_up") and not (row and row["approved_at"])
+            if needs_approval and status == "planned":
+                reason = "awaiting approval: " + reason
             with self.db.transaction() as conn:
                 conn.execute(
                     "INSERT INTO broker_orders (client_order_id, origin, plan_id, symbol, side, position_effect, qty,"
@@ -325,6 +333,9 @@ class DailyCycle:
                      tif or "opg", next_s, o["ref"], status, reason, utcnow(), utcnow()))
             if status == "skipped":
                 skipped += 1
+                continue
+            if needs_approval:
+                awaiting += 1
                 continue
             if dry_run or not enabled or tif is None:
                 planned += 1
@@ -345,7 +356,8 @@ class DailyCycle:
                 st.status = "error"
         why = ("DRY RUN" if dry_run else "trading disabled (BROKER_TRADING_ENABLED / automation switch)"
                if not enabled else how)
-        st.detail = f"{len(orders)} orders computed for {next_s}: {sent} sent, {planned} planned, {skipped} skipped ({why})"
+        st.detail = (f"{len(orders)} orders computed for {next_s}: {sent} sent, {planned} planned, {skipped} skipped"
+                     + (f", {awaiting} awaiting your approval" if awaiting else "") + f" ({why})")
         if tif == "day" and sent:
             st.status = "warning"
         st.data = {"tif": tif, "enabled": enabled, "orders": orders}

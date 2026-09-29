@@ -82,6 +82,9 @@ class StrategyConfig(BaseModel):
     htb_exclude_pct: float = Field(
         0.20, ge=0, lt=1, description="Exclude the least liquid fraction of eligible stocks from the short book")
     borrow_fee_annual: float = Field(0.005, ge=0, le=1, description="Assumed borrow cost, per year, charged per calendar day / 360")
+    cash_interest: bool = Field(
+        False, description="Credit the risk-free rate (Ken French RF) on positive cash, per calendar day / 360. "
+                           "The alpha regression then uses excess returns (r - RF); otherwise raw returns.")
     short_stop_loss: float | None = Field(
         0.50, gt=0, le=10, description="Cover a short when its close is this fraction above entry (fill next open)")
     crash_guard: bool = Field(True, description="Scale down the short book in bear/high-vol markets")

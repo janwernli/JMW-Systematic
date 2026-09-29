@@ -34,6 +34,7 @@ from ..strategy.execution import (
     CostModel,
     apply_corporate_actions,
     borrow_fee,
+    cash_interest,
     close_prices,
     cover_shorts,
     delisting_cashouts,
@@ -117,13 +118,15 @@ class AdvanceResult:
 
 class PaperLedger:
     def __init__(self, db: Database, calendar: TradingCalendar, provider_key: str,
-                 panel_fn: Callable[[], Panel], data_version_fn: Callable[[], str], is_demo: bool = False):
+                 panel_fn: Callable[[], Panel], data_version_fn: Callable[[], str], is_demo: bool = False,
+                 rf_fn: Callable[[], object] | None = None):
         self.db = db
         self.cal = calendar
         self.provider = provider_key
         self.panel_fn = panel_fn
         self.data_version_fn = data_version_fn
         self.is_demo = is_demo
+        self.rf_fn = rf_fn
 
     # ------------------------------------------------------------------ queries
     def active(self) -> dict | None:
@@ -339,7 +342,15 @@ class PaperLedger:
                 log_event(conn, "warning", "corporate_action", f"{e.symbol} delisted: {e.note}", portfolio_id=pid, session=s)
             shares = shares2
 
-            # 4. borrow fee on short market value, then close valuation
+            # 4. cash interest (optional), borrow fee on short market value, then close valuation
+            if cfg.cash_interest:
+                if self.rf_fn is None:
+                    raise LedgerError("cash_interest is on but no risk-free rate source is configured.", "config")
+                rate = self.rf_fn().annual(s)
+                interest = cash_interest(panel, t, cash, rate)
+                if interest:
+                    cash = r2(cash + interest)
+                    self._cash(conn, pid, s, "interest", None, interest, cash, f"RF {rate:.2%}/yr on cash (ACT/360)")
             fee, short_value = borrow_fee(panel, t, shares, cfg.borrow_fee_annual)
             if fee:
                 cash = r2(cash - fee)

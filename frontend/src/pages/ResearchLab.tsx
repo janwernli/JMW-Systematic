@@ -164,6 +164,8 @@ function SettingsForm({ d, onLaunched }: { d: S["ResearchDefaults"]; onLaunched:
               <NumberInput label="Crash: market vol >" {...pct("crash_market_vol_threshold")} min={1} max={200} suffix="%" disabled={!cfg.crash_guard} />
               <NumberInput label="Crash: short scale" value={cfg.crash_short_scale} onChange={num("crash_short_scale")} min={0} max={1} step={0.1} decimalScale={2} disabled={!cfg.crash_guard} />
             </SimpleGrid>
+            <Switch size="xs" label="Cash earns RF (Ken French, ACT/360) — alpha test then uses r − RF" checked={cfg.cash_interest}
+              onChange={(e) => { const v = e.currentTarget.checked; setCfg((c) => ({ ...c, cash_interest: v })); }} />
             <Switch size="xs" label="Crash guard (bear market + high vol → shrink short book)" checked={cfg.crash_guard}
               onChange={(e) => { const v = e.currentTarget.checked; setCfg((c) => ({ ...c, crash_guard: v })); }} />
           </>

@@ -90,6 +90,9 @@ def assumptions(cfg: StrategyConfig, info: ProviderInfo, benchmark: str | None) 
         {"key": "delisting", "text": "Holdings are converted to cash at their last available close on the delisting "
                                      "session. Real delisting proceeds may be materially lower."},
         {"key": "gross", "text": "Gross NAV = net NAV + cumulative slippage, commissions and borrow fees (not compounded)."},
+        {"key": "cash", "text": ("Positive cash (incl. short proceeds) earns the Ken French RF, ACT/360; the alpha test uses r - RF."
+                                 if cfg.cash_interest else
+                                 "Cash earns no interest; the alpha test therefore uses raw returns (RF not subtracted).")},
         {"key": "benchmark", "text": f"Benchmark {benchmark or 'n/a'}: "
                                      + ("total return (dividends reinvested via the same TR index)."
                                         if info.benchmark_return_basis == "total_return"
@@ -128,7 +131,14 @@ def execute_run(db: Database, run_id: int, panel: Panel, calendar: TradingCalend
                          (round(frac * 0.9, 4), f"Simulating {session}", run_id))
 
     try:
-        res = run_backtest(panel, calendar, cfg, progress)
+        rf = None
+        if cfg.cash_interest:
+            from .factors import RateSource, load_factors
+
+            rf = RateSource(load_factors(REPO_ROOT / "data" / "factors"))
+        res = run_backtest(panel, calendar, cfg, progress, rf=rf)
+        if rf is not None and rf.carried:
+            res.warnings.append(f"RF not yet published for {', '.join(sorted(rf.carried))}; latest month carried forward.")
         persist_result(db, run_id, res, info, row["data_version"])
     except Exception as e:  # noqa: BLE001
         log.exception("backtest failed", extra={"run_id": run_id})
@@ -149,6 +159,7 @@ def persist_result(db: Database, run_id: int, res: BacktestResult, info: Provide
     metrics["short_dividends_paid"] = float(-sum(e.amount for _, e in res.cash_events
                                                  if e.kind == "dividend" and e.amount < 0))
     metrics["stop_losses"] = len(res.stops)
+    metrics["cash_interest"] = float(sum(e.amount for _, e in res.cash_events if e.kind == "interest"))
     metrics["crash_guard_months"] = sum(1 for r in res.rebalances
                                         if r.signals.diagnostics.get("crash_guard", {}).get("active"))
     metrics["benchmark_symbol"] = res.benchmark_symbol

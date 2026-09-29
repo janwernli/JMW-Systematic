@@ -196,6 +196,27 @@ export function useAutomationMutations() {
       onError,
       onSuccess: () => qc.invalidateQueries({ queryKey: ["broker"] }),
     }),
+    approvalMode: useMutation({
+      mutationFn: (mode: "auto" | "manual") => api.put<{ approval_mode: string }>("/automation/approval", { mode }),
+      onError,
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["broker"] }),
+    }),
+    approve: useMutation({
+      mutationFn: (plan_id: number | null) => api.post<{ approved: number; message: string }>("/broker/approve", { plan_id }),
+      onError,
+      onSuccess: (r: { message: string }) => {
+        notifications.show({ color: "teal", title: "Rebalance approved", message: r.message });
+        setTimeout(() => qc.invalidateQueries(), 1500);
+      },
+    }),
+    decline: useMutation({
+      mutationFn: (plan_id: number | null) => api.post<{ declined: number }>("/broker/decline", { plan_id }),
+      onError,
+      onSuccess: (r: { declined: number }) => {
+        notifications.show({ color: "yellow", title: "Rebalance declined", message: `${r.declined} order(s) declined` });
+        qc.invalidateQueries();
+      },
+    }),
     run: useMutation({
       mutationFn: (dry_run: boolean) => api.post<{ started: boolean; message: string }>("/automation/run", { dry_run }),
       onError,

@@ -1406,6 +1406,138 @@
         }
       }
     },
+    "/api/automation/approval": {
+      "put": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Approval Mode",
+        "description": "'auto': rebalances are sent automatically. 'manual': they wait for approval (stop-losses stay automatic).",
+        "operationId": "approval_mode_api_automation_approval_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalModeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Approval Mode Api Automation Approval Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/broker/approve": {
+      "post": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Approve",
+        "description": "Approve all orders awaiting approval (optionally for one plan), then run a cycle to send them.",
+        "operationId": "approve_api_broker_approve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Approve Api Broker Approve Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/broker/decline": {
+      "post": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Decline",
+        "description": "Decline all orders awaiting approval (optionally for one plan). Declined orders are not regenerated.",
+        "operationId": "decline_api_broker_decline_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Decline Api Broker Decline Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/automation/enabled": {
       "put": {
         "tags": [
@@ -1543,6 +1675,19 @@
           "pending_plan_id"
         ],
         "title": "AdvanceResponse"
+      },
+      "ApprovalModeRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "ApprovalModeRequest"
       },
       "AutomationRun": {
         "properties": {
@@ -1751,6 +1896,17 @@
             ],
             "title": "Submitted At"
           },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -1900,6 +2056,17 @@
           "open_orders": {
             "type": "integer",
             "title": "Open Orders"
+          },
+          "approval_mode": {
+            "type": "string",
+            "title": "Approval Mode"
+          },
+          "awaiting_approval": {
+            "items": {
+              "$ref": "#/components/schemas/BrokerOrder"
+            },
+            "type": "array",
+            "title": "Awaiting Approval"
           }
         },
         "type": "object",
@@ -1916,7 +2083,9 @@
           "automation_enabled",
           "last_runs",
           "schedule_note",
-          "open_orders"
+          "open_orders",
+          "approval_mode",
+          "awaiting_approval"
         ],
         "title": "BrokerOverview"
       },
@@ -2882,6 +3051,23 @@
           "generated_at"
         ],
         "title": "DataQuality"
+      },
+      "DecisionRequest": {
+        "properties": {
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          }
+        },
+        "type": "object",
+        "title": "DecisionRequest"
       },
       "EquityPoint": {
         "properties": {
@@ -6113,6 +6299,12 @@
             "title": "Borrow Fee Annual",
             "description": "Assumed borrow cost, per year, charged per calendar day / 360",
             "default": 0.005
+          },
+          "cash_interest": {
+            "type": "boolean",
+            "title": "Cash Interest",
+            "description": "Credit the risk-free rate (Ken French RF) on positive cash, per calendar day / 360. The alpha regression then uses excess returns (r - RF); otherwise raw returns.",
+            "default": false
           },
           "short_stop_loss": {
             "anyOf": [

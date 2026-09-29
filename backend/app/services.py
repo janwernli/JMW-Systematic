@@ -53,7 +53,17 @@ class AppContext:
         self.broker_error: str | None = None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="worker")
         key = self.provider.info.key if self.provider else settings.market_data_provider
-        self.ledger = PaperLedger(self.db, self.calendar, key, self.panel, self.data_version)
+        self._rf = None
+        self.ledger = PaperLedger(self.db, self.calendar, key, self.panel, self.data_version, rf_fn=self.rf_source)
+
+    def rf_source(self):
+        """Ken French RF (cached weekly on disk); only used when a config enables cash_interest."""
+        if self._rf is None:
+            from .backtest.factors import RateSource, load_factors
+            from .config import REPO_ROOT
+
+            self._rf = RateSource(load_factors(REPO_ROOT / "data" / "factors"))
+        return self._rf
 
     # ------------------------------------------------------------------ broker
     @property
@@ -132,7 +142,8 @@ class AppContext:
         return result
 
     def fill_sectors(self, only_missing: bool = True) -> dict | None:
-        if not self.settings.sec_user_agent or self.provider is None:
+        """SEC EDGAR SIC sectors - Alpaca only (Norgate supplies its own GICS sectors)."""
+        if not self.settings.sec_user_agent or self.provider is None or self.provider.info.key != "alpaca":
             return None
         from .data.sectors import SecClient, classify_instruments
 

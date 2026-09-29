@@ -6,7 +6,8 @@ Per session t, strictly in this order:
                 (b) execute the pending rebalance formed at the previous session's close
                 at this session's open +/- slippage
   3. CLOSE      close out holdings whose final trading session is t (delisting)
-  4. CLOSE      charge borrow fees on short market value; mark to the close; record NAV
+  4. CLOSE      credit cash interest (optional, RF on positive cash); charge borrow fees on short market
+                value; mark to the close; record NAV
                 (cash + long value + short value, shorts negative)
   5. CLOSE      check short stop-losses (fills at the next open)
   6. AFTER CLOSE if t is the last session of its month: compute and freeze signals
@@ -30,6 +31,7 @@ from ..strategy.execution import (
     Fill,
     apply_corporate_actions,
     borrow_fee,
+    cash_interest,
     cover_shorts,
     delisting_cashouts,
     execute_rebalance,
@@ -101,8 +103,12 @@ def run_backtest(
     calendar: TradingCalendar,
     cfg: StrategyConfig,
     progress: Callable[[float, str], None] | None = None,
+    rf=None,
 ) -> BacktestResult:
+    """rf: object with .annual(session) -> annualized risk-free rate; required when cfg.cash_interest."""
     costs = CostModel(cfg.slippage_bps, cfg.commission_per_order, cfg.commission_bps)
+    if cfg.cash_interest and rf is None:
+        raise ValueError("cash_interest=True needs a risk-free rate source (Ken French RF).")
     start = cfg.start_date or earliest_start(panel, cfg)
     end = cfg.end_date or panel.sessions[-1]
     idx = [i for i, s in enumerate(panel.sessions) if start <= s <= end]
@@ -196,7 +202,13 @@ def run_backtest(
                 cash_events.append((s, e))
                 basis.pop(e.symbol, None)
 
-        # 4. borrow fees, then mark to market
+        # 4. cash interest, borrow fees, then mark to market
+        if cfg.cash_interest and k > 0:  # capital is funded at the first session's close: no accrual that day
+            rate = rf.annual(s)
+            interest = cash_interest(panel, t, cash, rate)
+            if interest:
+                cash = r2(cash + interest)
+                cash_events.append((s, CashEvent("interest", "", interest, f"RF {rate:.2%}/yr on cash (ACT/360)")))
         fee, _ = borrow_fee(panel, t, shares, cfg.borrow_fee_annual)
         if fee:
             cash = r2(cash - fee)

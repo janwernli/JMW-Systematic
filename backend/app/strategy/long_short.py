@@ -16,7 +16,8 @@ Steps (documented in the UI and README):
      beta-neutral portfolio's trailing daily returns; bounded by min/max gross per side, the total
      gross cap, and per-name cap capacity. If neutrality and the minimum gross conflict, the minimum
      gross is relaxed (caps and neutrality take priority) and the conflict is reported.
-  5b. Sector neutrality: a small quadratic program moves the weights as little as possible
+  5b. Sector neutrality (applied AFTER the crash guard, so the limits hold for the book that is traded;
+     with the guard on, this caps how net-long the book can get): a small quadratic program moves the weights as little as possible
      (relative squared deviation from the inverse-vol weights) so that |long - short| per sector
      <= `max_sector_net`, keeping each side's gross, beta neutrality and per-name caps. If it is
      infeasible, the unconstrained weights are kept and the failure is reported.
@@ -205,17 +206,6 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     if feasible and abs(GL - lo) < 1e-9 and g_star < lo:
         binding.append("vol target below minimum gross (minimum applied)")
 
-    # ---- sector neutrality ---------------------------------------------------------------------------
-    sector_of = dict(zip(table["symbol"], table["sector"])) if "sector" in table.columns else {}
-    sector_info = {"enabled": cfg.sector_neutral, "applied": False, "max_abs_net": None, "status": "disabled"}
-    if cfg.sector_neutral:
-        secL = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in longs]
-        secS = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in shorts]
-        wL, wS, sector_info = sector_neutralize(wL, wS, bL_i, bS_i, secL, secS, cfg.max_long_weight,
-                                                cfg.max_short_weight, cfg.max_sector_net)
-        if sector_info["status"] not in ("ok", "already_neutral"):
-            diag["notes"].append(f"Sector neutrality: {sector_info['status']}")
-
     # ---- crash guard -------------------------------------------------------------------------------
     crash = {"enabled": cfg.crash_guard, "active": False, "market_return": None, "market_vol": None}
     if cfg.crash_guard and bench_col is not None:
@@ -233,6 +223,29 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
                                  f"{cfg.crash_market_vol_threshold:.0%}; short book × {cfg.crash_short_scale:g}.")
     elif cfg.crash_guard:
         diag["notes"].append("Crash guard inactive: benchmark data unavailable.")
+
+    # ---- sector neutrality (after the crash guard, so it sees the final short book) -----------------
+    sector_of = dict(zip(table["symbol"], table["sector"])) if "sector" in table.columns else {}
+    sector_info = {"enabled": cfg.sector_neutral, "applied": False, "max_abs_net": None, "status": "disabled"}
+    if cfg.sector_neutral:
+        secL = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in longs]
+        secS = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in shorts]
+        wL, wS, sector_info = sector_neutralize(wL, wS, bL_i, bS_i, secL, secS, cfg.max_long_weight,
+                                                cfg.max_short_weight, cfg.max_sector_net)
+        if sector_info["status"] not in ("ok", "already_neutral"):
+            diag["notes"].append(f"Sector neutrality: {sector_info['status']}")
+
+    # Sector nets of the FINAL weights (after crash guard and neutralization), always reported.
+    final_net: dict[str, float] = {}
+    for sym, w in zip(longs, wL):
+        sec = sector_of.get(sym) if isinstance(sector_of.get(sym), str) else "Unclassified"
+        final_net[sec] = final_net.get(sec, 0.0) + float(w)
+    for sym, w in zip(shorts, wS):
+        sec = sector_of.get(sym) if isinstance(sector_of.get(sym), str) else "Unclassified"
+        final_net[sec] = final_net.get(sec, 0.0) - float(w)
+    classified = {k: v for k, v in final_net.items() if k != "Unclassified"}
+    sector_info["final_sector_net"] = final_net
+    sector_info["final_max_abs_net"] = max((abs(v) for v in classified.values()), default=None)
 
     weights = {s: float(w) for s, w in zip(longs, wL)} | {s: -float(w) for s, w in zip(shorts, wS)}
     port = RL @ wL - RS @ wS

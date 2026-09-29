@@ -596,6 +596,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/automation/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Approval Mode
+         * @description 'auto': rebalances are sent automatically. 'manual': they wait for approval (stop-losses stay automatic).
+         */
+        put: operations["approval_mode_api_automation_approval_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/broker/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve
+         * @description Approve all orders awaiting approval (optionally for one plan), then run a cycle to send them.
+         */
+        post: operations["approve_api_broker_approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/broker/decline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decline
+         * @description Decline all orders awaiting approval (optionally for one plan). Declined orders are not regenerated.
+         */
+        post: operations["decline_api_broker_decline_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/automation/enabled": {
         parameters: {
             query?: never;
@@ -651,6 +711,11 @@ export interface components {
             stopped_explanation: string;
             /** Pending Plan Id */
             pending_plan_id: number | null;
+        };
+        /** ApprovalModeRequest */
+        ApprovalModeRequest: {
+            /** Mode */
+            mode: string;
         };
         /** AutomationRun */
         AutomationRun: {
@@ -719,6 +784,8 @@ export interface components {
             filled_at: string | null;
             /** Submitted At */
             submitted_at: string | null;
+            /** Approved At */
+            approved_at?: string | null;
             /** Created At */
             created_at: string;
             /** Updated At */
@@ -765,6 +832,10 @@ export interface components {
             schedule_note: string;
             /** Open Orders */
             open_orders: number;
+            /** Approval Mode */
+            approval_mode: string;
+            /** Awaiting Approval */
+            awaiting_approval: components["schemas"]["BrokerOrder"][];
         };
         /** BrokerPosition */
         BrokerPosition: {
@@ -982,6 +1053,11 @@ export interface components {
             warnings: components["schemas"]["QualityWarning"][];
             /** Generated At */
             generated_at: string;
+        };
+        /** DecisionRequest */
+        DecisionRequest: {
+            /** Plan Id */
+            plan_id?: number | null;
         };
         /** EquityPoint */
         EquityPoint: {
@@ -2086,6 +2162,12 @@ export interface components {
              * @default 0.005
              */
             borrow_fee_annual: number;
+            /**
+             * Cash Interest
+             * @description Credit the risk-free rate (Ken French RF) on positive cash, per calendar day / 360. The alpha regression then uses excess returns (r - RF); otherwise raw returns.
+             * @default false
+             */
+            cash_interest: boolean;
             /**
              * Short Stop Loss
              * @description Cover a short when its close is this fraction above entry (fill next open)
@@ -3260,6 +3342,111 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AutomationRun"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approval_mode_api_automation_approval_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApprovalModeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_api_broker_approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decline_api_broker_decline_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
