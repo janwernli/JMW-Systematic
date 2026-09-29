@@ -20,7 +20,8 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--reload", action="store_true")
     exp = sub.add_parser("export-openapi")
     exp.add_argument("path", type=Path)
-    sub.add_parser("import-data")
+    imp = sub.add_parser("import-data")
+    imp.add_argument("--full", action="store_true", help="re-fetch full history for the (frozen) universe")
     adv = sub.add_parser("advance")
     adv.add_argument("--until", default=None)
     args = parser.parse_args(argv)
@@ -41,9 +42,7 @@ def main(argv: list[str] | None = None) -> int:
         configure_logging(settings.log_level, "text")
         ctx = AppContext(settings)
         if args.cmd == "import-data":
-            from .data.store import run_import
-
-            res = run_import(ctx.db, ctx.require_provider(), ctx.calendar)
+            res = ctx.refresh_data(full=args.full)
             print(f"import #{res['id']}: {res['status']}, {res['bars_loaded']} bars, coverage "
                   f"{res['coverage_start']}..{res['coverage_end']}")
         else:

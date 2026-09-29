@@ -78,3 +78,54 @@ def test_asset_classification_heuristic():
     assert classify_asset("SPY", "SPDR S&P 500 ETF Trust") == "etf"
     assert classify_asset("XYZ.PRA", "XYZ Corp 6.5% Series A Preferred") == "preferred"
     assert classify_asset("ABCW", "ABC Acquisition Corp Warrants") == "warrant"
+
+
+@pytest.mark.parametrize("symbol,name,kind", [
+    ("AAPL", "Apple Inc. Common Stock", "common_stock"),
+    ("JPM", "JPMorgan Chase & Co.", "common_stock"),
+    ("BRK.B", "BERKSHIRE HATHAWAY Class B", "common_stock"),
+    ("GPMT", "Granite Point Mortgage Trust Inc. Common Stock", "common_stock"),
+    ("GAB", "The Gabelli Equity Trust Inc.", "fund"),
+    ("QQQ", "Invesco QQQ Trust, Series 1", "fund"),
+    ("FXY", "Invesco CurrencyShares Japanese Yen Trust", "etf"),
+    ("GLDI", "UBS AG ETRACS Gold Shares Covered Call ETNs due February 2, 2033", "etf"),
+    ("GSK", "GSK plc American Depositary Shares (Each representing two Ordinary Shares)", "adr"),
+    ("GPJA", "Georgia Power Company Series 2017A 5.00 Percent Junior Subordinated Notes", "debt"),
+    ("GSRV", "GSR V Acquisition Corp. Class A ordinary shares", "spac"),
+])
+def test_classifier_on_real_alpaca_names(symbol, name, kind):
+    assert classify_asset(symbol, name) == kind
+
+
+def test_frozen_universe_skips_reselection_and_bar_end_is_after_bar_stamp():
+    seen = []
+
+    def handler(req):
+        seen.append(req.url.path)
+        if req.url.path == "/v2/assets":
+            return httpx.Response(200, json=[{"symbol": "AAA", "name": "AAA Inc. Common Stock", "exchange": "NYSE",
+                                              "status": "active", "tradable": True}])
+        assert req.url.params["end"] == "2024-03-28T12:00:00Z"  # includes the 2024-03-28 bar stamped 04:00Z
+        return httpx.Response(200, json={"bars": {}, "next_page_token": None})
+
+    p = make(handler)
+    inst = p.list_instruments(["AAA", "OLD"])
+    assert [i.symbol for i in inst] == ["AAA", "OLD", "SPY"]
+    assert seen == ["/v2/assets"]  # no dollar-volume re-selection requests
+    assert "Frozen" in inst[0].metadata["selection"]
+    p.fetch_bars(["AAA"], "2024-01-01", "2024-03-28")
+
+
+def test_corporate_action_requests_are_windowed_by_year():
+    from app.data.alpaca_provider import _year_windows
+
+    w = _year_windows("2016-01-01", "2018-06-30")
+    assert w[0] == ("2016-01-01", "2016-12-31") and w[-1] == ("2018-01-01", "2018-06-30") and len(w) == 3
+
+
+def test_relative_paths_resolve_from_project_root():
+    from app.config import REPO_ROOT, Settings
+
+    s = Settings(_env_file=None, DATABASE_PATH="./data/x.db", ALPACA_UNIVERSE_FILE="universe.txt")
+    assert s.database_path == (REPO_ROOT / "data" / "x.db").resolve()
+    assert s.alpaca_universe_file == (REPO_ROOT / "universe.txt").resolve()

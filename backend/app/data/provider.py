@@ -17,7 +17,7 @@ import pandas as pd
 BAR_COLUMNS = ["symbol", "session", "open", "high", "low", "close", "volume"]
 ACTION_COLUMNS = ["symbol", "ex_date", "action_type", "ratio", "amount"]
 
-ASSET_TYPES = ("common_stock", "etf", "fund", "preferred", "warrant", "unit", "right", "other")
+ASSET_TYPES = ("common_stock", "etf", "fund", "preferred", "warrant", "unit", "right", "adr", "spac", "debt", "other")
 
 
 @dataclass
@@ -67,8 +67,12 @@ class MarketDataProvider(ABC):
     info: ProviderInfo
 
     @abstractmethod
-    def list_instruments(self) -> list[InstrumentRecord]:
-        """Instrument master: symbols, asset types, listing/delisting dates where known."""
+    def list_instruments(self, symbols: list[str] | None = None) -> list[InstrumentRecord]:
+        """Instrument master: symbols, asset types, listing/delisting dates where known.
+
+        With `symbols`, return records for exactly those symbols (used to keep the
+        universe frozen across incremental refreshes instead of re-selecting it).
+        """
 
     @abstractmethod
     def fetch_bars(self, symbols: list[str], start: str, end: str) -> pd.DataFrame:

@@ -44,22 +44,34 @@ log = logging.getLogger(__name__)
 NY = ZoneInfo("America/New_York")
 BENCHMARK = "SPY"
 
+# Name patterns, checked in order. Alpaca exposes no ETF / share-class field, so the universe filter is a
+# documented heuristic aiming at "US common stock" in the CRSP share-code 10/11 sense (no funds, notes, ADRs,
+# preferreds, warrants, units, rights or blank-check shells).
 _NON_COMMON = [
-    (re.compile(r"\bETF\b|\bETN\b|\bINDEX FUND\b|\bSPDR\b|\bISHARES\b|\bPROSHARES\b|\bDIREXION\b", re.I), "etf"),
-    (re.compile(r"\bFUND\b|\bTRUST\b.*\bUNITS?\b|\bINCOME TRUST\b|\bMUNICIPAL\b", re.I), "fund"),
-    (re.compile(r"\bPREFERRED\b|\bPFD\b|\bDEPOSITARY SHARES?\b.*\bINTEREST\b|%", re.I), "preferred"),
+    (re.compile(r"\bNOTES?\b|DEBENTURE|SUBORDINATED|SYNTHETIC FIXED|\bSTRATS\b|\bDUE \d{4}|\bPERCENT\b|SENIOR NOTES", re.I), "debt"),
+    (re.compile(r"\bETF\b|\bETN\b|ETRACS|CURRENCYSHARES|\bINDEX FUND\b|\bSPDR\b|\bISHARES\b|\bPROSHARES\b|\bDIREXION\b", re.I), "etf"),
+    (re.compile(r"\bFUND\b|\bINCOME TRUST\b|\bMUNICIPAL\b|CLOSED[- ]END|\bTRUST\b.*\bUNITS?\b", re.I), "fund"),
+    (re.compile(r"\bPREFERRED\b|\bPFD\b|%", re.I), "preferred"),
     (re.compile(r"\bWARRANTS?\b|\bWTS?\b", re.I), "warrant"),
     (re.compile(r"\bUNITS?\b", re.I), "unit"),
     (re.compile(r"\bRIGHTS?\b", re.I), "right"),
+    (re.compile(r"AMERICAN DEPOSITA|DEPOSITORY SHARE|DEPOSITARY SHARE|\bADRS?\b|\bADS\b", re.I), "adr"),
+    (re.compile(r"ACQUISITION CORP|ACQUISITION CO\b|ACQUISITION LTD|MERGER CORP|BLANK CHECK", re.I), "spac"),
 ]
+# A "... Trust" without common-stock or REIT wording is almost always a closed-end fund or grantor trust.
+_COMMON_HINT = re.compile(r"COMMON STOCK|COMMON SHARES|ORDINARY SHARES?|SUBORDINATE VOTING|REAL ESTATE INVESTMENT TRUST|\bREIT\b|\bINC\b.*COMMON", re.I)
 
 
 def classify_asset(symbol: str, name: str) -> str:
-    """Heuristic common-stock filter. Alpaca exposes no ETF / share-class field."""
+    """Heuristic common-stock filter (see _NON_COMMON). Returns an asset_type."""
+    name = name or ""
     for pat, kind in _NON_COMMON:
-        if pat.search(name or ""):
+        if pat.search(name):
             return kind
-    if re.search(r"[./-](P|PR|W|WS|U|R)[A-Z]?$", symbol) or re.search(r"\.[A-Z]$", symbol):
+    if re.search(r"\bTRUST\b", name, re.I) and not _COMMON_HINT.search(name):
+        return "fund"
+    # Suffixes for preferreds / warrants / units / rights. Plain share classes (BRK.B, BF.B) stay common stock.
+    if re.search(r"[./-](P|PR|W|WS|U|R)[A-Z]?$", symbol):
         return "other"
     return "common_stock"
 
@@ -148,12 +160,16 @@ class AlpacaProvider(MarketDataProvider):
                 break
 
     # ------------------------------------------------------------------ interface
-    def list_instruments(self) -> list[InstrumentRecord]:
-        if self._instruments is not None:
+    def list_instruments(self, symbols: list[str] | None = None) -> list[InstrumentRecord]:
+        if self._instruments is not None and symbols is None:
             return self._instruments
         assets = self._get(f"{self.trading_url}/v2/assets", {"asset_class": "us_equity"})
         by_sym = {a["symbol"]: a for a in assets if a.get("exchange") in ("NYSE", "NASDAQ", "AMEX", "ARCA", "BATS")}
-        if self.universe_file:
+        if symbols is not None:
+            wanted = [s for s in symbols if s != BENCHMARK]
+            self.selection_note = (f"Frozen universe of {len(wanted)} symbols chosen at the first import "
+                                   "(refreshes do not re-select).")
+        elif self.universe_file:
             wanted = [s.strip().upper() for s in Path(self.universe_file).read_text().splitlines()
                       if s.strip() and not s.startswith("#")]
             self.selection_note = f"Universe from file {self.universe_file} ({len(wanted)} symbols)."
@@ -180,7 +196,7 @@ class AlpacaProvider(MarketDataProvider):
     def _top_by_recent_dollar_volume(self, symbols: list[str], n: int) -> list[str]:
         if n <= 0 or len(symbols) <= n:
             return symbols
-        end = date.today().isoformat()
+        end = self.latest_completed_session()
         start = (pd.Timestamp(end) - pd.Timedelta(days=45)).date().isoformat()
         bars = self.fetch_bars(symbols, start, end)
         if bars.empty:
@@ -192,7 +208,7 @@ class AlpacaProvider(MarketDataProvider):
         rows: list[tuple] = []
         for i in range(0, len(symbols), 100):
             chunk = symbols[i:i + 100]
-            params = {"symbols": ",".join(chunk), "timeframe": "1Day", "start": start, "end": end,
+            params = {"symbols": ",".join(chunk), "timeframe": "1Day", "start": start, "end": _bar_end(end),
                       "adjustment": "raw", "feed": self.feed, "limit": 10000, "sort": "asc"}
             for page in self._paginate(f"{self.data_url}/v2/stocks/bars", params):
                 for sym, bars in (page.get("bars") or {}).items():
@@ -205,8 +221,9 @@ class AlpacaProvider(MarketDataProvider):
     def fetch_corporate_actions(self, symbols: list[str], start: str, end: str) -> pd.DataFrame:
         rows: list[tuple] = []
         for i in range(0, len(symbols), 100):
+          for w_start, w_end in _year_windows(start, end):  # keep each request's date range modest
             params = {"symbols": ",".join(symbols[i:i + 100]), "types": "forward_split,reverse_split,cash_dividend",
-                      "start": start, "end": end, "limit": 1000, "sort": "asc"}
+                      "start": w_start, "end": w_end, "limit": 1000, "sort": "asc"}
             for page in self._paginate(f"{self.data_url}/v1/corporate-actions", params):
                 ca = page.get("corporate_actions") or {}
                 for kind in ("forward_splits", "reverse_splits"):
@@ -229,7 +246,31 @@ class AlpacaProvider(MarketDataProvider):
         return df
 
     def default_history_range(self) -> tuple[str, str]:
-        return self.history_start, datetime.now(UTC).astimezone(NY).date().isoformat()
+        return self.history_start, self.latest_completed_session()
+
+    @staticmethod
+    def latest_completed_session() -> str:
+        """Never request the current, still-forming daily bar (and respect the free plan's 15-minute delay)."""
+        from ..calendar import xnys_calendar
+
+        return xnys_calendar().latest_completed_session(datetime.now(UTC)) or date.today().isoformat()
+
+
+def _bar_end(end: str) -> str:
+    """Daily bars are stamped 00:00 New York time; a bare date would be read as 00:00 UTC and could drop
+    that session's bar. Use noon UTC of the end date: after the bar's stamp, and in the past for completed sessions."""
+    return f"{end}T12:00:00Z" if len(end) == 10 else end
+
+
+def _year_windows(start: str, end: str) -> list[tuple[str, str]]:
+    out = []
+    s = pd.Timestamp(start)
+    e = pd.Timestamp(end)
+    while s <= e:
+        w = min(s + pd.DateOffset(years=1) - pd.Timedelta(days=1), e)
+        out.append((s.date().isoformat(), w.date().isoformat()))
+        s = w + pd.Timedelta(days=1)
+    return out
 
 
 def _session_of(ts: str) -> str:

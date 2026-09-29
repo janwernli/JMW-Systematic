@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from ... import __version__
-from ...data.store import quality_report, run_import
+from ...data.store import quality_report
 from ...db import log_event
 from ...strategy.config import StrategyConfig
 from ...strategy.signals import compute_signals
@@ -87,20 +87,15 @@ def refresh(ctx: AppContext = Depends(get_ctx)):
     corrections are picked up; the demo fixture is simply re-imported.
     """
     prov = ctx.require_provider()
-    start = None
-    if not prov.info.is_demo:
-        hi = ctx.db.scalar("SELECT MAX(b.session) FROM bars b JOIN instruments i ON i.id=b.instrument_id "
-                           "WHERE i.provider=?", (prov.info.key,))
-        if hi:
-            start = ctx.calendar.offset(ctx.calendar.session_on_or_before(hi), -10)
+    incremental = not prov.info.is_demo and ctx.has_data()
 
     def job():
         try:
-            run_import(ctx.db, prov, ctx.calendar, start=start)
+            ctx.refresh_data()
         except Exception as e:  # noqa: BLE001 - recorded in data_imports + events by run_import
             with ctx.db.transaction() as conn:
                 log_event(conn, "error", "data_import", f"Background refresh failed: {e}")
 
     ctx.executor.submit(job)
     return {"started": True, "message": f"Import from {prov.info.name} started"
-                                        + (f" (from {start})" if start else " (full history)")}
+                                        + (" (last 10 sessions onward, frozen universe)" if incremental else " (full history)")}

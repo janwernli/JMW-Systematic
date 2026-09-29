@@ -80,6 +80,26 @@ class AppContext:
             return self.provider.info.data_label
         return "Demo Data" if self.settings.market_data_provider == "demo" else "Delayed Market Data"
 
+    def refresh_data(self, full: bool = False) -> dict:
+        """Import from the provider.
+
+        Live providers: after the first import the universe is FROZEN (same symbols on every refresh) and
+        only the last 10 stored sessions onward are re-fetched, which also picks up late corrections.
+        `full=True` re-fetches the whole history for the frozen universe. The demo is simply re-imported.
+        """
+        prov = self.require_provider()
+        if prov.info.is_demo:
+            return run_import(self.db, prov, self.calendar)
+        existing = [r["symbol"] for r in self.db.query(
+            "SELECT symbol FROM instruments WHERE provider=? ORDER BY symbol", (prov.info.key,))]
+        start = None
+        if existing and not full:
+            hi = self.db.scalar("SELECT MAX(b.session) FROM bars b JOIN instruments i ON i.id=b.instrument_id "
+                                "WHERE i.provider=?", (prov.info.key,))
+            if hi:
+                start = self.calendar.offset(self.calendar.session_on_or_before(hi), -10)
+        return run_import(self.db, prov, self.calendar, start=start, symbols=existing or None)
+
     # ------------------------------------------------------------------ backtests
     def submit_backtest(self, cfg: StrategyConfig, name: str | None) -> int:
         prov = self.require_provider()

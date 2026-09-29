@@ -28,6 +28,7 @@ def run_import(
     calendar: TradingCalendar,
     start: str | None = None,
     end: str | None = None,
+    symbols: list[str] | None = None,
 ) -> dict:
     """Fetch instruments, raw bars and corporate actions from `provider` and store them.
 
@@ -47,7 +48,7 @@ def run_import(
         import_id = cur.lastrowid
     warnings: list[str] = []
     try:
-        instruments = provider.list_instruments()
+        instruments = provider.list_instruments(symbols)
         symbols = [i.symbol for i in instruments]
         bars = provider.fetch_bars(symbols, start, end)
         actions = provider.fetch_corporate_actions(symbols, start, end)

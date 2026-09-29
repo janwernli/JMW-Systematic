@@ -251,8 +251,9 @@ class DemoProvider(MarketDataProvider):
         requires_key=False,
     )
 
-    def list_instruments(self) -> list[InstrumentRecord]:
-        return generate_demo_dataset()[0]
+    def list_instruments(self, symbols: list[str] | None = None) -> list[InstrumentRecord]:
+        records = generate_demo_dataset()[0]
+        return records if symbols is None else [r for r in records if r.symbol in set(symbols)]
 
     def fetch_bars(self, symbols: list[str], start: str, end: str) -> pd.DataFrame:
         bars = generate_demo_dataset()[1]

@@ -80,8 +80,8 @@ class FixtureProvider(MarketDataProvider):
             coverage_note="test", entitlement_note="test", adjustment_note="test", survivorship_note="test",
             requires_key=False)
 
-    def list_instruments(self):
-        return self._inst
+    def list_instruments(self, symbols=None):
+        return self._inst if symbols is None else [r for r in self._inst if r.symbol in set(symbols)]
 
     def fetch_bars(self, symbols, start, end):
         b = self._bars

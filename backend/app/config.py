@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +58,12 @@ class Settings(BaseSettings):
 
     # Demo bootstrap
     demo_autoseed: bool = Field(default=True, alias="DEMO_AUTOSEED")
+
+    @field_validator("database_path", "alpaca_universe_file", mode="after")
+    @classmethod
+    def _resolve_from_repo_root(cls, v: Path | None) -> Path | None:
+        # Relative paths in .env are relative to the project folder, not the backend process's cwd.
+        return v if v is None or v.is_absolute() else (REPO_ROOT / v).resolve()
 
     @property
     def cors_origin_list(self) -> list[str]:
