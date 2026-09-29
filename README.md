@@ -1,4 +1,8 @@
-# JMW Systematic: long-short momentum with Alpaca paper trading
+<img src="frontend/public/brand/jmw-logo-dark.png" alt="JMW Capital Partners" height="36">
+
+# JMW Capital Partners Trading
+
+Long-short momentum with Alpaca paper trading.
 
 This is a locally hosted research terminal and **fully automated paper-trading system** for one strategy: a US-equities, long-short, beta- and sector-neutral cross-sectional momentum strategy.
 

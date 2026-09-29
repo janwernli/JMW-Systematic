@@ -40,7 +40,7 @@ def create_app(settings: Settings | None = None, ctx: AppContext | None = None) 
         context.executor.shutdown(wait=False, cancel_futures=True)
 
     app = FastAPI(
-        title="Momentum Terminal API",
+        title="JMW Capital Partners Trading API",
         version=__version__,
         description="US equities long-short momentum: research, model ledger and Alpaca PAPER trading automation.",
         lifespan=lifespan,

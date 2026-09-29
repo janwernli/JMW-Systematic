@@ -1,5 +1,5 @@
 {
-  "name": "momentum-terminal",
+  "name": "jmw-capital-partners-trading",
   "private": true,
   "version": "1.0.0",
   "description": "US equities long-short composite momentum: research, model ledger and automated Alpaca paper trading",

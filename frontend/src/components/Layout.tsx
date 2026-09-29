@@ -89,9 +89,13 @@ export function Layout() {
         <Group h="100%" px="sm" justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Toggle navigation" />
-            <Text fw={700} size="sm" style={{ letterSpacing: "0.14em" }}>
-              MOMENTUM<span style={{ color: "#3987e5" }}>·</span>TERMINAL
-            </Text>
+            <Group gap={10} wrap="nowrap" aria-label="JMW Capital Partners Trading">
+              <img src="/brand/jmw-logo-light.png" alt="JMW Capital Partners" style={{ height: 22, width: "auto", display: "block" }} />
+              <span style={{ width: 1, height: 18, background: "#3a4048" }} />
+              <Text size="xs" fw={500} c="gray.4" style={{ letterSpacing: "0.32em", fontFamily: "Georgia, 'Times New Roman', serif" }}>
+                TRADING
+              </Text>
+            </Group>
             <Text size="xs" c="dimmed" visibleFrom="md">US equities · long-short composite momentum · Alpaca paper</Text>
           </Group>
           <Group gap="md" wrap="nowrap">

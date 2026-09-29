@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Momentum Terminal API",
+    "title": "JMW Capital Partners Trading API",
     "description": "US equities long-short momentum: research, model ledger and Alpaca PAPER trading automation.",
     "version": "1.0.0"
   },
