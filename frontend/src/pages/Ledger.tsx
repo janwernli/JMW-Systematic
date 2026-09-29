@@ -232,9 +232,6 @@ function Admin() {
           <Button color="red" variant="light" leftSection={<IconTrash size={14} />} disabled={!status?.has_portfolio} onClick={() => setOpen(true)}>
             Archive current virtual portfolio
           </Button>
-          {status?.mode === "demo" && (
-            <Button variant="default" loading={m.reseed.isPending} onClick={() => m.reseed.mutate()}>Re-create demo portfolio</Button>
-          )}
         </Group>
       </Stack>
       <Modal opened={open} onClose={() => setOpen(false)} title="Archive the virtual portfolio?" centered>

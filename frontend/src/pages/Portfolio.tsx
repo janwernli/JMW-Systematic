@@ -25,7 +25,7 @@ export function Portfolio() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Portfolio</h1>
+          <h1 className="page-title">Model Portfolio</h1>
           <div className="page-sub">{data.valuation_note} · Paper Simulation</div>
         </div>
         <Badge variant="light" color="teal" size="sm">Valuation timestamp: close of {data.valuation_session}</Badge>
@@ -33,8 +33,8 @@ export function Portfolio() {
 
       <div className="kpi-strip">
         <Kpi label="NAV" value={fmtUsd(data.nav, true)} sub="cash + Σ shares × mark" />
-        <Kpi label="Cash" value={fmtUsd(data.cash, true)} sub={data.mode === "long_short" ? `${fmtPct(data.cash_weight, 1)} of NAV (incl. short proceeds)` : `${fmtPct(data.cash_weight, 2)} of NAV (residual)`} />
-        {data.mode === "long_short" && (
+        <Kpi label="Cash" value={fmtUsd(data.cash, true)} sub={`${fmtPct(data.cash_weight, 1)} of NAV (incl. short proceeds)`} />
+        {(
           <Kpi label="Gross / net" value={`${fmtPct(data.long_gross + data.short_gross, 0)} / ${fmtPct(data.net_exposure, 1, true)}`}
             sub={`long ${fmtPct(data.long_gross, 1)} · short ${fmtPct(data.short_gross, 1)}`}
             tip="Long market value / NAV and |short market value| / NAV at the valuation close. The book targets beta neutrality, so net dollar exposure can differ from zero." />

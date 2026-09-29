@@ -1,6 +1,6 @@
 """Fully automatic daily cycle for the Alpaca PAPER account.
 
-Run by the Windows scheduler (14:00 and 22:30 Europe/Zurich) or manually. Idempotent: safe to run
+Run by the Windows scheduler (14:00 and 23:30 Europe/Zurich) or manually. Idempotent: safe to run
 any number of times per day.
 
   1. DATA      refresh end-of-day bars (+ missing SEC sectors); check they reach the latest completed session
@@ -225,6 +225,8 @@ class DailyCycle:
             hist = b.portfolio_history()
             with self.db.transaction() as conn:
                 for h in hist:
+                    if not h["equity"] or h["equity"] <= 0:
+                        continue  # Alpaca reports 0 equity for dates before the account existed
                     d = datetime.fromtimestamp(h["ts"], UTC).astimezone(NY).date().isoformat()
                     if self.cal.is_session(d):
                         conn.execute("INSERT OR REPLACE INTO broker_equity (session, equity, profit_loss, updated_at) "

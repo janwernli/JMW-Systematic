@@ -122,7 +122,7 @@ def command_center(ctx: AppContext = Depends(get_ctx)):
         "benchmark_inception_return": bench_ret,
         "return_difference": (inc - bench_ret) if bench_ret is not None else None,
         "drawdown": series[-1]["drawdown"], "max_drawdown": min(s["drawdown"] for s in series),
-        "mode": ctx.ledger.config_of(port).mode, "long_gross": lv / last["nav"], "short_gross": sv / last["nav"],
+        "mode": "long_short", "long_gross": lv / last["nav"], "short_gross": sv / last["nav"],
         "net_exposure": (lv - sv) / last["nav"],
         "next_rebalance": nxt, "nav_series": series, "top_movers": movers[:8], "recent_fills": fills,
     })
@@ -183,7 +183,7 @@ def positions(ctx: AppContext = Depends(get_ctx)):
         "valuation_note": f"Marked at raw closes of {s}; stale marks carry the last available close.",
         "nav": nav, "cash": last["cash"], "cash_weight": last["cash"] / nav if nav else 0.0, "rows": rows,
         "long_gross": long_g, "short_gross": short_g, "net_exposure": long_g - short_g,
-        "mode": ctx.ledger.config_of(port).mode,
+        "mode": "long_short",
         "sector_exposure": sectors,
         "sector_note": (f"Sector source: {', '.join(sorted(sources))}." if sector_ok else
                         "Sector exposure hidden: the data provider does not supply reliable sector metadata."),

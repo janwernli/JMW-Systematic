@@ -1,543 +1,370 @@
-# Momentum Terminal
+# JMW Systematic: long-short momentum with Alpaca paper trading
 
-A locally hosted **US-equities cross-sectional momentum** research terminal and **internal paper simulator**.
+This is a locally hosted research terminal and **fully automated paper-trading system** for one strategy: a US-equities, long-short, beta- and sector-neutral cross-sectional momentum strategy.
 
-- Historical **backtests** of a precisely defined 12–1 month cross-sectional momentum strategy in two modes:
-  - **Long-short v2** (default): beta-neutral decile books with inverse-volatility weights, a volatility target, a crash guard, borrow fees and a short stop-loss.
-  - **Long-only v1**: top 50 names, equal weight.
-  Both rebalance monthly.
-- A forward-running **internal virtual portfolio** funded with $100,000 of simulated cash.
-- Research and operational dashboards (six screens).
-- A market-data adapter interface (demo fixture built in, Alpaca optional). **No broker orders are ever placed.**
+- **Research.** Event-ordered monthly backtests of a composite momentum signal (plain 12–1 is selectable for comparison), with a Fama-French 5 + momentum alpha test.
+- **Paper trading.** A daily automation job trades your **Alpaca PAPER account** (no real money). That account is the source of truth for the traded portfolio.
+- **Model track.** An internal model ledger simulates the same strategy with theoretical fills. It is identical to the backtest to the cent, and the Alpaca account is compared against it.
 
-> **Not investment advice. No real money, no brokerage connection, no live orders.**
-> Every number in the UI carries one of these labels: **Demo Data**, **Delayed Market Data**, **Backtest**, **Paper Simulation**.
-> The built-in dataset is **synthetic**: fictional tickers that contain a digit (e.g. `KUGU7`), which no real US common stock uses.
-> Its results say nothing about real-world performance.
+> **Paper trading only.** The broker adapter refuses any host other than `paper-api.alpaca.markets`, so nothing here can trade real money.
+> Historical results on Alpaca data are **survivorship-biased** (see [Limitations](#10-limitations)). This is not investment advice.
 
 ---
 
 ## Contents
 
 1. [Quick start](#1-quick-start)
-2. [Install dependencies](#2-install-dependencies)
-3. [Start the backend and frontend](#3-start-the-backend-and-frontend)
-4. [Open the dashboard](#4-open-the-dashboard)
-5. [Load the demo and run a backtest](#5-load-the-demo-and-run-a-backtest)
-6. [Initialize and advance the virtual portfolio](#6-initialize-and-advance-the-virtual-portfolio)
-7. [Add a market-data key later (Alpaca)](#7-add-a-market-data-key-later-alpaca)
-8. [Run the tests](#8-run-the-tests)
-9. [Commit and push to a private GitHub repository](#9-commit-and-push-to-a-private-github-repository)
-10. [Architecture](#10-architecture)
-11. [Database and data flow](#11-database-and-data-flow)
-12. [Strategy rules (v1)](#12-strategy-rules-v1)
-13. [Execution, accounting and metrics](#13-execution-accounting-and-metrics)
-14. [Limitations of the data and the backtest](#14-limitations-of-the-data-and-the-backtest)
-15. [Roadmap: optional broker paper-account integration](#15-roadmap-optional-broker-paper-account-integration)
-16. [Configuration reference](#16-configuration-reference)
-17. [Troubleshooting](#17-troubleshooting)
+2. [Install](#2-install)
+3. [Configure Alpaca and SEC](#3-configure-alpaca-and-sec)
+4. [Import data](#4-import-data)
+5. [Start the app and open the dashboard](#5-start-the-app-and-open-the-dashboard)
+6. [Automated paper trading](#6-automated-paper-trading)
+7. [Research: backtests, comparison, alpha test](#7-research-backtests-comparison-alpha-test)
+8. [Strategy rules](#8-strategy-rules)
+9. [Execution, accounting and metrics](#9-execution-accounting-and-metrics)
+10. [Limitations](#10-limitations)
+11. [Norgate Data (point-in-time Russell 1000)](#11-norgate-data-point-in-time-russell-1000)
+12. [Architecture and data flow](#12-architecture-and-data-flow)
+13. [Tests](#13-tests)
+14. [Git and GitHub](#14-git-and-github)
+15. [Configuration reference](#15-configuration-reference)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
 ## 1. Quick start
 
 ```bash
-npm run setup      # once: Python venv + packages, frontend packages, creates .env (demo mode)
-npm run dev        # starts backend (127.0.0.1:8765) and frontend (127.0.0.1:5173)
+npm run setup              # once: Python venv + packages, frontend packages, creates .env
+# edit .env: Alpaca keys, SEC_USER_AGENT (see section 3)
+npm run import-data        # first import: universe, ~10 years of daily bars, splits/dividends, SEC sectors
+npm run daily:dry          # dry run of the daily cycle against your paper account (sends nothing)
+npm run schedule:install   # Windows: run the cycle automatically at 14:00 and 23:30 every day
+npm run start              # dashboard at http://127.0.0.1:8765
 ```
 
-Open **http://127.0.0.1:5173**. The first start builds the demo database, which takes about 20–30 seconds.
-The details for each step follow.
+## 2. Install
 
-## 2. Install dependencies
+You need three programs:
 
-You need three programs. Install each one once.
+- **Python 3.12** (3.11+ works): https://www.python.org/downloads/
+- **Node.js 24 LTS** (20+ works): https://nodejs.org/. Use the **ARM64** installer on Windows-on-ARM PCs (e.g. Snapdragon).
+- **Git**
 
-| Tool | Version | Where |
-|---|---|---|
-| **Python** | 3.12 (3.11+ works) | https://www.python.org/downloads/ |
-| **Node.js** | 24 LTS (20+ works) | https://nodejs.org/ – choose the **LTS** installer. On Windows-on-ARM PCs (e.g. Snapdragon), pick the **ARM64** `.msi`. |
-| **Git** | any recent | https://git-scm.com/downloads |
+On **Windows (PowerShell)**, npm scripts are blocked by default. Allow them once, or type `npm.cmd` instead of `npm`:
 
-Docker, cloud accounts and paid data are not needed for the demo.
-
-### Windows (PowerShell)
-
-1. During the Python installation, tick **"Add python.exe to PATH"**.
-2. Windows PowerShell blocks `npm` scripts by default. Allow them once for your user:
-   ```powershell
-   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-   ```
-   Alternatively, type `npm.cmd` instead of `npm` in every command below.
-3. In the project folder, run:
-   ```powershell
-   cd "C:\Coding\JMW Trading Strategy"
-   npm run setup
-   ```
-
-### macOS / Linux (Terminal)
-
-```bash
-cd ~/path/to/momentum-terminal
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+cd "C:\Coding\JMW Trading Strategy"
 npm run setup
 ```
 
-On Ubuntu/Debian you may first need `sudo apt install python3-venv`.
+On **macOS / Linux**, run `npm run setup`. On Ubuntu you may first need `sudo apt install python3-venv`.
 
-### What `npm run setup` does
+`npm run setup` does the following:
 
-It runs the same steps on every operating system (see `scripts/setup.mjs`):
+1. Creates `backend/.venv`.
+2. Installs the pinned Python packages (`backend/requirements*.txt`, including SciPy for the sector-neutral optimizer).
+3. Installs the pinned frontend packages.
+4. Copies `.env.example` to `.env` if it doesn't exist.
 
-1. Creates `backend/.venv` with Python 3.11+.
-2. Runs `pip install -r backend/requirements-dev.txt`. Versions are pinned in `backend/requirements.txt`.
-3. Runs `npm install` in `frontend/`. Versions are pinned in `frontend/package.json` and the lockfile.
-4. Copies `.env.example` to `.env` if `.env` does not exist yet. The default is demo mode, with no keys needed.
+## 3. Configure Alpaca and SEC
 
-<details><summary>Manual setup without the helper</summary>
+Edit `.env` in the project root. The file is git-ignored and never committed.
 
-```bash
-# backend
-cd backend
-python -m venv .venv                       # Windows: py -3.12 -m venv .venv
-.venv/bin/pip install -r requirements-dev.txt          # Windows: .venv\Scripts\pip install -r requirements-dev.txt
-# frontend
-cd ../frontend && npm install
-# config
-cd .. && cp .env.example .env              # Windows: copy .env.example .env
-```
-</details>
-
-## 3. Start the backend and frontend
-
-```bash
-npm run dev
+```ini
+MARKET_DATA_PROVIDER=alpaca
+ALPACA_API_KEY_ID=...            # Alpaca paper-trading keys (dashboard -> API keys). Also used for market data.
+ALPACA_API_SECRET_KEY=...
+ALPACA_DATA_FEED=sip             # consolidated volume (free plan: SIP history except the last 15 minutes)
+SEC_USER_AGENT=YourName research you@example.com   # SEC requires a name + contact e-mail
+BROKER_TRADING_ENABLED=true      # master switch; false = orders are computed but never sent
 ```
 
-This starts both processes, and **Ctrl+C** stops both:
+The keys stay on the local server and are never sent to the browser. If you ever paste your keys somewhere public, including a chat, regenerate them in the Alpaca dashboard and update `.env`.
 
-| Process | Address | Notes |
-|---|---|---|
-| FastAPI backend | http://127.0.0.1:8765 (`/api/...`) | Logs are structured: JSON by default, or `LOG_FORMAT=text`. |
-| Vite frontend | http://127.0.0.1:5173 | Proxies `/api` to the backend. |
-
-Both processes bind to **localhost only**, so nothing is reachable from other computers.
-
-To run the two processes separately, use two terminals:
+## 4. Import data
 
 ```bash
-npm run dev:api     # backend only
-npm run dev:web     # frontend only
+npm run import-data          # incremental refresh after the first import
+npm run import-data -- --full # re-download the full history for the frozen universe
+npm run sectors              # re-classify all sectors from SEC EDGAR
 ```
 
-To run a single-port production build, use:
+**The first import:**
+
+- selects the universe: the 600 most liquid active US common stocks by recent dollar volume, or `ALPACA_UNIVERSE_FILE`
+- adds SPY and the 11 SPDR sector ETFs (XLB, XLC, XLE, XLF, XLI, XLK, XLP, XLRE, XLU, XLV, XLY) as reference series
+- downloads raw daily bars from 2016 plus splits and cash dividends
+- classifies sectors from **SEC EDGAR SIC codes**
+
+**After that, the universe is frozen.** Refreshes only re-fetch the last 10 sessions for the same symbols. Requests always end at the latest *completed* NYSE session, so a half-finished day is never stored.
+
+**Classifying common stock.** Alpaca has no field for this, so a documented name/symbol heuristic excludes ETFs/ETNs, funds and trusts, notes, preferreds, ADRs, SPACs, warrants, units and rights.
+
+## 5. Start the app and open the dashboard
 
 ```bash
-npm run start       # builds the frontend, then FastAPI serves it at http://127.0.0.1:8765
+npm run start      # builds the frontend, serves everything at http://127.0.0.1:8765
+npm run dev        # development: backend :8765 + live-reloading frontend at http://127.0.0.1:5173
 ```
 
-## 4. Open the dashboard
-
-Go to **http://127.0.0.1:5173** (or http://127.0.0.1:8765 after `npm run start`).
-A striped **DEMO DATA** ribbon at the top confirms you are looking at the synthetic dataset.
+Both bind to localhost only. Stop with **Ctrl+C**.
 
 | Screen | What it shows |
 |---|---|
-| **Command Center** | Virtual NAV, cash, day and inception return, benchmark comparison, drawdown, next rebalance, data status, equity and drawdown curves, top movers, recent fills, alerts, market/session clock |
-| **Universe & Rankings** | Searchable, sortable universe with price, ADV, 12–1 momentum, rank, eligibility reason, position, and current / model / plan weights. Click a row to open the stock drawer: signal inputs, TR-index chart, raw price chart, corporate actions. |
-| **Portfolio** | Positions, marks with stale flags, weights, drift from target, contribution, sector exposure (only where metadata is reliable), concentration |
-| **Rebalance Desk** | Frozen signal timestamp, target portfolio, current vs target weights, proposed sells and buys, estimated turnover and costs, cash reconciliation, rule checks, and the **Apply to internal virtual portfolio only** button |
-| **Research Lab** | Backtest settings, launch and progress, equity, drawdown, rolling metrics, monthly heatmap, trades, rebalance log, assumptions, reproducibility, and comparison of up to 4 saved runs |
-| **Ledger & Diagnostics** | Every simulated order, fill and cash event, the audit trail, data quality and ingestion history, reproducibility metadata, and portfolio administration |
+| **Command Center** | Alpaca paper equity and automation status strip. Model portfolio KPIs, equity/drawdown curves, data status, alerts. |
+| **Alpaca Paper** | Automation switch, **Dry run now** / **Run cycle now**, account, equity (Alpaca vs model vs SPY), actual positions vs model targets with drift, run log, every order sent to Alpaca with its status. |
+| **Universe & Rankings** | Every stock with its composite score, residual momentum, 12–1, FIP, sector, vol, beta, eligibility and long/short book. A stock drawer shows signal inputs and price charts. |
+| **Model Portfolio** | The internal model ledger's positions, drift, sector exposure and concentration. |
+| **Rebalance Desk** | Frozen month-end plans: targets, estimated orders, cash reconciliation, rule checks, and sizing diagnostics (gross, betas, ex-ante vol, sector-neutral nets, hard-to-borrow screen, crash guard). |
+| **Research Lab** | Backtest settings (composite or plain 12-1), live config warnings, results, exposure, **Factor alpha** tab, monthly heatmap, trades, rebalance log, run comparison. |
+| **Ledger & Diagnostics** | Model ledger orders, fills and cash; audit trail; data quality and ingestion; reproducibility. |
 
-Every panel has an ⓘ tooltip. It explains where the values come from, their units and timestamps, and the formulas used.
+## 6. Automated paper trading
 
-## 5. Load the demo and run a backtest
+### What the daily cycle does (`npm run daily`)
 
-The demo loads **automatically on first start** (`DEMO_AUTOSEED=true`). The seed does three things:
+The cycle is idempotent, so running it several times a day is safe.
 
-1. It imports the deterministic synthetic dataset:
-   - 140 fictional common stocks, 8 ETFs, funds and preferreds that the universe filter must exclude, and a synthetic benchmark `MKT0` that stands in for SPY.
-   - Real NYSE sessions from 2016-01-04 to 2026-09-25.
-   - Splits, reverse splits, dividends, IPOs, delistings, trading halts and missing opening prints.
-2. It runs one default backtest ("Default v1 (demo seed)").
-3. It creates a demo virtual portfolio funded at the close of 2025-12-31.
-   - Its monthly plans through July 2026 are applied automatically, and this is labelled in the audit log.
-   - **The 2026-08-31 plan is left waiting for your decision.**
+1. **Data.** Refreshes end-of-day bars and fills in missing SEC sectors. If the data doesn't reach the latest completed NYSE session, the cycle **sends no orders**.
+2. **Sync.** Pulls the Alpaca account, positions, order statuses and daily equity history.
+3. **Model.** Advances the internal model ledger and automatically applies its month-end plan.
+4. **Stops.** Checks each **actual** short position. If its close is at least 1.5 × its average entry price, a cover order is placed for the next open.
+5. **Rebalance.** For up to 5 sessions after a month-end signal, reconciles the **actual** positions to the frozen targets:
+   - Order size is `trunc(target weight × account equity ÷ signal close)`.
+   - A long-to-short flip is split: close now, open at the next run. Alpaca rejects flipping a position in one order.
+   - New shorts require Alpaca's `shortable` and `easy_to_borrow` flags; otherwise they are skipped and recorded.
+   - Orders that expired unfilled are retried.
+6. **Submit.** Orders are sent only when **all** of these hold: `BROKER_TRADING_ENABLED=true`, the dashboard's automation switch is ON, the data is fresh, and the run is not a dry run.
+   - Between **19:00 and 09:28 ET** they are sent as market-on-open orders (opening auction).
+   - If that window was missed but the fill session is trading, they are sent as a regular market order, flagged as late.
+   - Otherwise they stay planned for the next run.
+   - Every order carries a deterministic `client_order_id`, so it can never be sent twice.
 
-To run your own backtest:
-
-1. Open **Research Lab**.
-2. Adjust the start and end dates, holdings (top N), minimum ADV, minimum price, slippage (bps), commission and initial capital.
-3. Click **Run backtest**. A progress bar shows while it runs, which takes a few seconds on the demo.
-4. The result tabs are: Equity & drawdown · Rolling metrics · Monthly returns · Trades · Rebalances · Assumptions & reproducibility.
-5. To compare runs, tick the boxes of 2–4 saved runs.
-
-Every run stores its full config, the data version (a content fingerprint), the provider, its results, timestamps, and package and git versions.
-The same config on the same data version reproduces identical numbers; a test checks this.
-
-## 6. Initialize and advance the virtual portfolio
-
-The virtual portfolio lives in the local SQLite database (`data/momentum.db`) and **persists across restarts**.
-
-**In the UI (demo walkthrough):**
-
-1. **Rebalance Desk** shows plan #9 with signal 2026-08-31 and fill 2026-09-01, status *proposed*.
-   Review the rule checks, the cash reconciliation and the proposed orders.
-2. Click **Apply to internal virtual portfolio only**, tick the confirmation, and apply.
-   A plan can be applied **once**; the database rejects a second application.
-   Alternatively, **Skip** the plan; the decision is recorded.
-3. Click **Advance to latest data** (on the Command Center or Rebalance Desk).
-   - The portfolio processes each session in order: pre-open corporate actions, then fills at the open, then close valuation, then the month-end signal.
-   - It **stops automatically** whenever a new month-end plan needs your decision.
-   - **Advance 1 session** steps a single day.
-4. The demo data ends on 2026-09-25, so advancing stops there with "no newer data".
-
-To start over, open **Ledger & Diagnostics → Portfolio admin**. You can archive the portfolio (its history is kept) and re-create the demo portfolio.
-To initialize a new portfolio with your own capital and inception session, use the form on the Command Center when no portfolio exists.
-
-**From the command line** (the backend server may be running or stopped):
+### Schedule (Windows)
 
 ```bash
-npm run advance                         # advance through all stored sessions (stops at decisions)
-npm run advance -- --until 2026-09-15   # advance up to a given session
+npm run schedule:install   # registers two tasks for your user
+npm run schedule:remove    # removes them
 ```
 
-Changing strategy settings in **Research Lab** never touches the paper portfolio.
-The paper portfolio has its own config, edited via **Rebalance Desk → Paper config**.
-Each edit creates a new config version that applies to **future plans only**.
-Fills, cash transactions, NAV rows and position snapshots are append-only; SQLite triggers reject updates and deletes.
+| Task | Local time (Europe/Zurich) | New York time | Purpose |
+|---|---|---|---|
+| `JMW-Systematic daily 1400` | 14:00 | 08:00 ET (09:00 during the few DST-mismatch weeks) | Stops, month-end rebalance, opening-auction orders |
+| `JMW-Systematic sync 2330` | 23:30 | 17:30 ET | Syncs fills and equity after the close. No orders: outside the auction window. |
 
-## 7. Add a market-data key later (Alpaca)
+- The tasks run while you are logged on. **StartWhenAvailable** catches up after sleep.
+- Output goes to `logs/daily.log`.
+- **The PC must be on around 14:00** on the first trading day of each month. If it wakes after 09:28 ET, orders go out as late market orders.
+- On macOS/Linux, use cron instead:
 
-The app ships one real-data adapter: **Alpaca Market Data**. It is isolated behind the `MarketDataProvider` interface in `backend/app/data/provider.py`.
-It only *reads* data: bars, corporate actions and the asset list. It never calls an order or account endpoint.
+  ```
+  0 14 * * 1-5  cd /path/to/repo && node scripts/py.mjs -m app daily --trigger schedule >> logs/daily.log 2>&1
+  30 23 * * 1-5 cd /path/to/repo && node scripts/py.mjs -m app daily --trigger schedule >> logs/daily.log 2>&1
+  ```
 
-1. Create a free account at https://alpaca.markets and generate **API keys** in the dashboard.
-   Paper-trading keys are fine; they are only used to read data here.
-2. Edit `.env` in the project root. Keys stay on the server and are never sent to the browser.
-   ```ini
-   MARKET_DATA_PROVIDER=alpaca
-   ALPACA_API_KEY_ID=your-key-id
-   ALPACA_API_SECRET_KEY=your-secret
-   ALPACA_DATA_FEED=sip
-   ALPACA_HISTORY_START=2016-01-01
-   # optional: one symbol per line; otherwise the top ALPACA_MAX_SYMBOLS by *recent* dollar volume
-   # ALPACA_UNIVERSE_FILE=./universe.txt
-   ALPACA_MAX_SYMBOLS=600
-   ```
-3. Import the history. This takes several minutes for hundreds of symbols because of rate limits.
-   ```bash
-   npm run import-data
-   ```
-   - The **first** import chooses the universe and then **freezes** it. Later refreshes fetch only the last 10 stored sessions onward for the same symbols, which also picks up late corrections.
-   - To re-download the full history for the frozen universe, run `npm run import-data -- --full`.
-   - To choose a new universe, delete `data/momentum.db` (this also removes the paper portfolio) and import again.
-   - Requests always end at the **latest completed** NYSE session, so a half-finished daily bar is never stored. This also respects the free plan's 15-minute restriction.
-4. Restart `npm run dev`.
-   - The UI switches to **Delayed Market Data** and shows a red **SURVIVORSHIP BIAS** ribbon.
-   - Initialize a new virtual portfolio from the Command Center. Demo and Alpaca portfolios are kept separately.
-5. After each trading day, click **Refresh data** (Command Center, visible in live mode) or run `npm run import-data`, then **Advance**.
+### Month-end timeline (example: September → October 2026)
 
-**What Alpaca provides.** These are per Alpaca's public docs, so verify them for your plan because they can change:
-
-| Item | Details |
+| When | What happens |
 |---|---|
-| Endpoints | `GET /v2/stocks/bars` (raw daily bars, multi-symbol, paginated via `next_page_token`) · `GET /v1/corporate-actions` (splits, reverse splits, cash dividends by ex-date) · `GET /v2/assets` (asset list) |
-| Historical coverage | Stock bars from 2016 onward |
-| Free plan | About 200 requests/min. SIP (consolidated) historical data except the latest 15 minutes. The IEX feed covers only a small share of volume, which would break the dollar-volume filter, so **SIP is the default**. |
-| Adjustments | The app requests `adjustment=raw` and applies splits and dividends itself from the corporate-actions endpoint |
-| Rate limits | The adapter retries on HTTP 429 using the `X-RateLimit-Reset` header, and retries 5xx and network errors with exponential backoff |
-| Timestamps | Daily bars are mapped to the New York session date |
-| Missing features | No ETF/share-class field. Common stocks are identified by a documented **name/symbol heuristic** (`classify_asset`) that excludes ETFs/ETNs, closed-end funds and trusts, notes, preferreds, ADRs, SPACs, warrants, units and rights, and keeps share classes such as BRK.B and REITs. No sector data, so sector exposure is hidden. Not a point-in-time security master, so delisted names are largely missing. |
+| **Wed 30 Sep, 16:00 ET** | Close of the last session of September. That close is the signal. |
+| **Wed 30 Sep, 23:30** | Sync only. The signal is not processed yet: bars are only trusted one hour after the close. |
+| **Thu 1 Oct, 14:00 (08:00 ET)** | Refreshes data, freezes the signal, sizes orders from account equity and submits market-on-open orders. |
+| **Thu 1 Oct, 09:30 ET** | Orders fill in Alpaca's opening auction. |
+| **Thu 1 Oct, 23:30** | Syncs fills. The model ledger fills at the same open ± assumed slippage. |
 
-**Consequence:** backtests on Alpaca data are **survivorship-biased**, and the UI says so everywhere.
-An unbiased whole-market study needs a point-in-time dataset with delisted securities and historical membership (for example CRSP, Norgate, or Sharadar via Nasdaq Data Link).
-Any such source can be added by implementing the four methods of `MarketDataProvider`.
+### Safety switches
 
-## 8. Run the tests
+- `BROKER_TRADING_ENABLED` in `.env`: the master switch.
+- **Automation** switch on the Alpaca Paper page: a kill switch that takes effect immediately. It does not cancel orders already at Alpaca; cancel those in the Alpaca dashboard.
+- The adapter only accepts the paper host. There is no code path to a live-money account.
 
-```bash
-npm test                 # backend pytest suite + frontend type-check
-npm run test:backend     # backend only
-npm run build            # production frontend build (tsc + vite)
-```
+## 7. Research: backtests, comparison, alpha test
 
-The suite has 85 tests, built on small constructed datasets with hand-computed expected numbers. It covers:
+In the **Research Lab**:
 
-- `test_signals.py`: the exact 12–1 lookback (t−21 / t−252 sessions), measuring by exchange sessions rather than a stock's own rows, the history requirement, splits and dividends inside the lookback, the raw-price filter, the liquidity window, tie-breaks, exclusions, **no look-ahead**, and coverage blocking.
-- `test_execution.py`: whole shares and residual cash, **sell-before-buy**, slippage and commission arithmetic, no substitution of a missing open, cash-limited partial fills, and no-leverage invariants.
-- `test_accounting.py`: split cash-in-lieu, reverse splits, a **dividend credited once** with a continuous NAV, splits and dividends on the same day, delisting cash-outs, and stale marks.
-- `test_calendar.py`: NYSE holidays (Good Friday, New Year), early closes, session offsets, and the latest completed session.
-- `test_backtest.py`: fills at the next open after a holiday, no trading without an open, no look-ahead at the NAV level, gross = net + costs, NAV = cash + positions, repeatable runs, and metric formulas.
-- `test_ledger.py`: **persistence across a restart**, duplicate-application prevention, DB-level immutability, config changes that affect only future plans, cash reconciliation, and a paper ledger that **exactly matches the backtest**.
-- `test_long_short.py`: water-fill caps, short-sale cash and marks, dividends and split fractions on shorts, borrow-fee arithmetic, the order reduce → short → cover → buy (including a long-to-short flip), signed cost basis, stop-loss thresholds and covers, disjoint decile books with minimum names, the rank buffer, the $10 short floor, beta neutrality, the crash guard, per-name caps, and a long-short paper ledger that exactly matches the backtest, stop-loss included.
-- `test_data_quality.py`: stale-data detection, a rebalance blocked on insufficient coverage, a halt on a session with no bars, and the missing-key error state.
-- `test_alpaca_provider.py`: pagination, raw adjustment, session dates, 429/5xx retries, auth errors, and corporate-action mapping, all against a mocked HTTP transport.
-- `test_api.py`: the end-to-end demo flow over HTTP, including the demo paper ledger matching a backtest exactly.
+1. Pick **Composite signal** or **Plain 12-1**. Adjust books, sizing, sector neutrality, the hard-to-borrow screen and short-risk parameters.
+2. Click **Run backtest**. Tick 2–4 saved runs to compare them.
+3. Open the **Factor alpha** tab. It regresses the run's monthly returns minus RF on the **Fama-French 5 factors (2×3) + momentum**:
+   - Factors come from the Kenneth R. French Data Library, downloaded and cached weekly under `data/factors/`.
+   - Results show alpha (monthly × 12), **Newey-West t-stats** (Bartlett kernel, lag = ⌊4·(T/100)^(2/9)⌋), all factor betas and R².
+   - This is reported for the full sample and for each half (each half needs at least 24 months).
+   - The first month is dropped because it is partial. Months not yet published by the library are excluded and noted.
 
-## 9. Commit and push to a private GitHub repository
+**Results on the current Alpaca data (2017-01 → 2026-09, default settings).** These are illustrations only; see Limitations.
 
-The repository already has a local history.
+| | Composite | Plain 12-1 |
+|---|---|---|
+| Net CAGR / vol / max DD | 4.1% / 8.3% / −14.1% | 3.5% / 8.3% / −12.4% |
+| Realized beta to SPY | 0.00 | −0.01 |
+| Alpha (FF5 + Mom), full sample | +0.7%/yr, t = 0.5 | +0.1%/yr, t = 0.1 |
+| Alpha, 1st half / 2nd half | −3.3% (t −2.1) / +4.8% (t 2.5) | −2.8% (t −1.4) / +2.7% (t 1.2) |
+| Momentum-factor loading | 0.34 (t 7) | 0.35 (t 7) |
 
-**Before any commit, check that nothing private is staged:**
+## 8. Strategy rules
 
-```bash
-git status --short
-git check-ignore -v .env data/momentum.db backend/.venv frontend/node_modules frontend/dist
-```
-
-`.gitignore` excludes the following: `.env` (secrets), `data/` and `*.db` (local database and portfolio state), virtual environments, `node_modules`, build output, caches, logs and `.tools/`.
-
-**Option A: GitHub CLI** (https://cli.github.com)
-
-```bash
-gh auth login
-gh repo create momentum-terminal --private --source . --remote origin --push
-```
-
-**Option B: website**
-
-1. On https://github.com/new, create a repository, choose **Private**, and do **not** add a README or .gitignore.
-2. Then run:
-   ```bash
-   git remote add origin https://github.com/<your-user>/momentum-terminal.git
-   git push -u origin main
-   ```
-
-For later changes, use:
-
-```bash
-git add -A
-git commit -m "Describe the change"
-git push
-```
-
-## 10. Architecture
-
-```
-┌──────────────────────────── Browser (localhost:5173) ─────────────────────────────┐
-│ React + TypeScript · Mantine · ECharts · TanStack Query/Table                      │
-│ Renders only. Types generated from the backend OpenAPI schema (src/api/schema.d.ts)│
-└───────────────────────────────────────┬────────────────────────────────────────────┘
-                                        │ JSON over /api (Vite proxy in dev)
-┌───────────────────────────────────────▼────────────────────────────────────────────┐
-│ FastAPI (backend/app/api) – typed Pydantic schemas, errors {error, message}          │
-│   system · universe · portfolio/paper · rebalance · research · ledger routes         │
-├──────────────────────────────────────────────────────────────────────────────────────┤
-│ services.AppContext – wires settings, DB, calendar, provider, ledger, run executor    │
-├───────────────┬───────────────┬──────────────────┬───────────────┬───────────────────┤
-│ data/         │ strategy/     │ backtest/        │ ledger/       │ calendar.py       │
-│ provider.py   │ config.py     │ engine.py        │ paper.py      │ XNYS sessions via │
-│ demo_provider │ signals.py    │ metrics.py       │ plans, orders,│ exchange_calendars│
-│ alpaca_provider│ execution.py │ runner.py        │ fills, cash,  │                   │
-│ panel.py      │ (shared by    │ (persisted runs) │ snapshots     │                   │
-│ store.py      │  backtest AND │                  │               │                   │
-│ (import, QA)  │  paper ledger)│                  │               │                   │
-├───────────────┴───────────────┴──────────────────┴───────────────┴───────────────────┤
-│ SQLite (data/momentum.db) – versioned SQL migrations, append-only triggers, WAL      │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-- **No trading logic in the UI.** Signals, sizing, fills, accounting and metrics are pure Python modules.
-- **One execution path.** `strategy/execution.py` handles sizing, fills, costs, corporate actions and marking, and both the backtest and the paper ledger use it.
-  A test proves that the paper ledger reproduces the backtest NAV to the cent.
-- **Provider isolation.** Everything outside `data/*_provider.py` sees only raw bars plus explicit corporate actions.
-
-Project layout:
-
-```
-backend/
-  app/            api/ (routes, schemas) · data/ · strategy/ · backtest/ · ledger/ · db/ (migrations)
-  tests/          pytest suite
-  requirements*.txt, pyproject.toml
-frontend/
-  src/            api/ (client, hooks, generated types) · components/ · pages/ · lib/ · styles/
-scripts/          setup.mjs · dev.mjs · py.mjs  (cross-platform helpers)
-.env.example      configuration template
-```
-
-To regenerate the frontend types after changing an API schema, run `npm run gen:api`.
-
-## 11. Database and data flow
-
-```
-Provider ──► store.run_import ──► instruments · bars (raw OHLCV) · corporate_actions · data_imports
-                                          │  (validation: non-sessions, duplicates, bad closes, missing opens)
-                                          ▼
-                              panel.build_panel  (sessions × symbols, causal total-return index, marks)
-                                          │
-              ┌───────────────────────────┴───────────────────────────┐
-              ▼                                                       ▼
-   backtest.run_backtest                                   ledger.PaperLedger.advance
-   → backtest_runs / _nav / _rebalances /                  → paper_nav · position_snapshots · positions
-     _fills / _cash_events · signal_sets/_rows               cash_transactions · paper_orders · paper_fills
-                                                              rebalance_plans · plan_orders · signal_sets/_rows
-                                   system_events (audit trail for everything)
-```
-
-| Table | Purpose |
-|---|---|
-| `instruments` | Symbol master: asset type (and how it was determined), sector (and its source), list and delist dates |
-| `bars` | Raw daily OHLCV per NYSE session |
-| `corporate_actions` | Splits (new shares per old) and cash dividends (USD/share) by ex-date |
-| `data_imports` | Every ingestion: range, coverage, counts, warnings, provenance JSON |
-| `strategy_configs` | Every config version, by canonical hash |
-| `signal_sets`, `signal_rows` | Frozen signals: inputs, momentum, eligibility reason, rank and target weight per stock (immutable) |
-| `backtest_runs` (+ `_nav`, `_rebalances`, `_fills`, `_cash_events`) | Inputs, data version, metrics, assumptions, warnings, reproducibility and results for each run |
-| `paper_portfolios` | Virtual portfolio(s): capital, cash, as-of session, config version |
-| `rebalance_plans`, `plan_orders` | Month-end plans with estimates and rule checks. Status moves proposed → applied → executed, or skipped / blocked. |
-| `paper_orders`, `paper_fills` | Internal orders (created on apply) and immutable simulated fills |
-| `cash_transactions` | Every cash movement with running balance (immutable) |
-| `positions`, `position_snapshots`, `paper_nav` | Current holdings; daily immutable snapshots and NAV |
-| `system_events` | Immutable audit log |
-
-Migrations live in `backend/app/db/migrations/NNNN_*.sql`. They are applied automatically and idempotently at startup.
-
-## 12. Strategy rules
-
-All defaults are adjustable in the Research Lab. The paper portfolio's copy of these settings is changed via **Paper config**.
-Both modes share the universe, the signal, the eligibility filters, the timing and the costs in the v1 table below.
-
-### Long-short v2 (default, `mode = "long_short"`)
+These are the defaults; everything is adjustable in the Research Lab. The live/model copy is changed under **Rebalance Desk → Paper config** and applies to future plans only.
 
 | Rule | Definition |
 |---|---|
-| Books | Long the top **10%** and short the bottom **10%** of eligible stocks by 12–1 momentum. **At least 50 and at most 100 names per side**, filled with the next ranks or trimmed to the best ranks, and never more than half the eligible names. |
-| Buffer | Stocks enter at the top/bottom 10%. A held long stays while it ranks in the top **30%**, and a held short stays while it ranks in the bottom 30%. |
-| Short eligibility | Raw close **> $10**, and the stock must not have been stopped out since the previous signal |
-| Weights | Proportional to **1 / realized volatility**, using the trailing 126 sessions (~6 months) of daily total returns. Caps are **2% of NAV per long** and **1% per short**; any excess is redistributed (water-filling). |
-| Beta neutrality | Short gross = long gross × β_long / β_short, where betas are the weighted averages of 252-session betas vs. the benchmark, shrunk 33% toward 1. The book's ex-ante beta is therefore zero. This is **not** dollar-neutral. |
-| Volatility target | Long gross = 10% ÷ annualized vol of the beta-neutral unit portfolio's trailing 126-session daily returns, bounded to **50–75% of NAV per side** and **150% total**. If per-name caps make neutrality impossible above the 50% minimum, the minimum is relaxed; caps and neutrality take priority, and the vol target stays a ceiling. The binding constraint is shown with each plan. |
-| Crash guard | If the benchmark's trailing 504-session (~24-month) total return is negative **and** its 126-session realized vol is above **20%** annualized, the short book is multiplied by **0.5**. The book is then deliberately net long beta. |
-| Short costs | **0.5%/yr borrow fee** (an assumption) accrued daily on short market value. Dividends are **paid** on shorts on the ex-date. Short proceeds are held as cash earning 0%. |
-| Stop-loss | If a short's close is **≥ 50% above its average entry price**, it is covered automatically at the **next open**. It cannot be re-shorted until the next monthly signal. If the open is missing, the cover is retried at the following open. |
-| Execution order | Reduce/exit longs, then open shorts (both raise cash), then cover shorts, then buy longs in rank order |
+| Universe | Point-in-time US common stocks (listed at t, not yet delisted). Raw close > $5, 20-session average dollar volume ≥ $5M, at least 252 valid bars, valid bars at t, t−21 and t−252. With Norgate, the stock must also be a Russell 1000 member at t. |
+| Timing | Signals are computed and frozen after the close of the last NYSE session of each month. Only data up to t is used. Fills happen at the next session's open. |
+| **Signal (composite)** | 0.60 · z(residual momentum) + 0.25 · z(sector-demeaned 12–1) + 0.15 · z(frog-in-the-pan). Each component is winsorized at mean ± 3σ and then z-scored across eligible stocks. If a component is missing for a stock, its weight is dropped. |
+| Residual momentum | Monthly total returns. Over the last 36 months, regress r = a + b_m·r_market + b_s·r_sectorETF + e (market only if the sector ETF lacks history, e.g. XLC before 2018-06). Score = Σ e over months t−11…t−1 ÷ sd(those residuals). The intercept absorbs a constant drift, so only a *recent* idiosyncratic trend scores. |
+| Sector-demeaned 12–1 | TR(t−21)/TR(t−252) − 1 minus the mean of eligible stocks in the same sector |
+| Frog-in-the-pan | ID = sgn(PRET)·(%neg − %pos days) over the 12–1 window; the score is sgn(PRET)·(−ID) = %up days − %down days. Smooth winners rank high and smooth losers rank low. |
+| Plain 12–1 (selectable) | TR(t−21)/TR(t−252) − 1 on NYSE session offsets |
+| Books | Long the top 10% and short the bottom 10% of eligible stocks by score, 50–100 names per side. Buffer: held names stay while in the top/bottom 30%. |
+| Short eligibility | Raw close > $10. Not stopped out since the last signal. Not in the **bottom 20% of eligible stocks by 60-session dollar volume** (hard-to-borrow stand-in). Live orders also require Alpaca's easy-to-borrow flag. |
+| Weights | 1 / realized vol (126 sessions), capped at 2% per long and **1.5% per short**. Excess is redistributed. |
+| Beta neutral | Short gross = long gross × β_long / β_short. Betas use 252 sessions vs SPY, shrunk 33% toward 1 (β = 1 if history is too short). |
+| Vol target | 10% ex-ante (trailing 126-session returns of the proposed book). Bounded to 50–75% gross per side and 150% total. |
+| **Sector neutral** | \|long − short\| ≤ 2% of NAV per sector (11 sectors from SEC SIC). A quadratic program (SciPy SLSQP, with an exact LP feasibility check) stays as close as possible to the inverse-vol weights while keeping gross, beta neutrality and caps. If caps make that impossible, **gross is reduced** and reported. Unclassified stocks are unconstrained. |
+| Crash guard | If SPY's 24-month return < 0 and its 6-month realized vol > 20%, the short book is multiplied by 0.5. |
+| Costs (assumed) | 10 bps slippage, $0 commission. **Borrow fee 0.5%/yr accrued per calendar day (ACT/360)**; Monday pays for the weekend. Short proceeds earn 0%. |
+| Stop-loss | Short close ≥ 1.5 × average entry → cover at the next open. No re-short until the next signal. |
+| **Capacity warning** | If `min_names_per_side × max_short_weight < max_side_gross` (or the long equivalent), the config emits a `ConfigWarning`. The warning is shown in the UI, plan checks and run diagnostics: the per-name caps can prevent the vol target from being reached. |
 
-Two choices here are mine, and both are configurable. "Market vol is high" means above 20% annualized. The buffer is interpreted as "stay while within the top/bottom 30%".
+## 9. Execution, accounting and metrics
 
-### Long-only v1 (`mode = "long_only"`)
+**Event order each session** (identical in the backtest and the model ledger; a test verifies they match to the cent):
 
-| Rule | Definition |
+1. Pre-open: splits and dividends. Shorts pay dividends and split fractions.
+2. Open: stop-loss covers, then the rebalance. Order of trades: reduce longs → short sales → covers → buys in rank order.
+3. Close: delisting close-outs.
+4. Close: borrow fee (ACT/360), then mark to market. NAV = cash + long value + short value, where short value is negative.
+5. Close: stop-loss checks.
+6. Month-end: freeze the signal and create the plan.
+
+**Accounting details:**
+
+- Whole shares only.
+- Signed average cost basis: longs record cash paid; shorts record −(net proceeds).
+- Valuation uses **raw** prices, and dividends go through cash, so they are never double counted.
+
+**Metrics:**
+
+| Metric | Definition |
 |---|---|
-| Universe | Point-in-time US **common stocks**: listed at the signal session and not delisted before it. ETFs, funds, preferreds, warrants, units, rights and the benchmark are excluded, using the provider's field or a documented heuristic. |
-| Direction | Long-only. No leverage, no short selling. |
-| Capital | $100,000 of virtual cash |
-| Signal | `momentum = TR(t−21) / TR(t−252) − 1`, where `t` is the signal session, offsets are **NYSE sessions**, and `TR` is the causal total-return index (split- and dividend-adjusted close) |
-| Timing | Computed and **frozen after the close** of the last NYSE session of each month. Only data ≤ t is read. |
-| History | At least 252 valid bars before t, plus valid bars at t−252, t−21 and t |
-| Price filter | Raw (unadjusted, point-in-time) close at t **> $5** |
-| Liquidity | Mean of close × volume over the 20 sessions ending at t **≥ $5,000,000**. The window must be complete. |
-| Data sufficiency | At least 90% of the universe must have a bar at t; otherwise the rebalance is **blocked** with the reason shown |
-| Ranking | Momentum descending. Ties broken by ADV descending, then symbol ascending (deterministic). |
-| Selection | Top 50, or all eligible stocks if fewer |
-| Weighting | Equal weight, whole shares, limited by available cash. The residual cash is displayed. |
-| Rebalance | Monthly. Fills are simulated at the **next session's open**. If a stock has no opening price, it is **not traded**; the signal close is never substituted. |
-| Costs (assumed) | 10 bps adverse slippage on buys and sells, $0 commission. These are configurable assumptions, not observed execution costs. |
-| Benchmark | SPY total return (demo: synthetic `MKT0`). If dividends are unavailable, it is labelled **price return only**. |
-
-## 13. Execution, accounting and metrics
-
-**Event order per session** (identical in the backtest and the paper ledger, which a test verifies to the cent):
-
-1. **Pre-open.** Ex-date splits adjust share counts; fractional shares are paid as cash-in-lieu at the prior mark ÷ ratio.
-   Cash dividends are credited on shares held × amount, on the ex-date. Shorts have negative share counts, so they pay dividends and split fractions. The pay-date lag is not modelled.
-2. **Open.** Short stop-loss covers triggered at the previous close execute first. Then an applied or pending plan executes.
-   - Compute `NAV_open = cash + Σ shares × open`. A holding without an open is valued at its pre-open mark and flagged.
-   - `target_shares = floor((w × NAV_open − commission) / (open × (1 + slippage)))`
-   - **Sells first**, in symbol order: full exits, then trims. Fill price is `open × (1 − slippage)`.
-   - **Buys second**, in rank order: fill price is `open × (1 + slippage)`. If cash runs short, the largest affordable whole-share quantity is bought.
-   - What remains is residual cash.
-3. **Close.** A holding on its final trading session is converted to cash at its last close. This is an assumption; real delisting proceeds can be lower.
-4. **Close.** Borrow fees are charged on short market value. NAV = cash + Σ shares × raw close, where short market value is negative. If a stock has no bar, the last close is carried forward, restated for any actions, and flagged as stale.
-5. **Close.** Each short's close is checked against its stop-loss.
-6. **After close.** On the last session of the month, signals are formed and frozen, and a plan is created.
-
-**No double counting of dividends.** Signals use the total-return index. Valuation uses **raw** prices, and dividends are credited to cash explicitly. Adjusted prices are never used for valuation.
-
-**Metrics** (the formulas are also shown in the Research Lab):
-
-| Metric | Formula |
-|---|---|
-| Daily return | `r_t = NAV_t / NAV_{t−1} − 1` |
-| Total return | `NAV_end / NAV_start − 1` |
-| CAGR | `(NAV_end / NAV_start)^(365.25 / days) − 1`, **only reported if the sample is ≥ 365 calendar days** |
-| Annualized volatility | `stdev(r_t) × √252` |
-| Return/vol | `mean(r_t) × 252 / vol` (risk-free rate = 0) |
-| Drawdown | `NAV_t / max(NAV_0..t) − 1` |
-| Turnover (one-way) | `(buys + sells) / 2 / NAV_open` |
-| Difference vs benchmark | Strategy total return − benchmark total return. This is **a simple difference, not a statistically estimated alpha**. |
-| Gross NAV | Net NAV + cumulative slippage, commissions and borrow fees (not compounded) |
+| CAGR | Only shown when the sample covers at least 365 days |
+| Volatility | sd(daily returns) × √252 |
+| Max drawdown | Largest peak-to-trough fall in NAV |
+| Turnover | (buys + sells) / 2 / NAV at the open |
 | Gross / net exposure | (long value + \|short value\|) / NAV and (long − \|short\|) / NAV |
-| Realized beta | cov(strategy, benchmark) / var(benchmark) of daily returns. This describes the past; it is not a forecast. |
-| Monthly return | Last NAV of month / last NAV of the prior month − 1 |
+| Realized beta | cov(strategy, SPY) / var(SPY) over the backtest |
+| Gross NAV | Net NAV + cumulative slippage, commission and borrow fees |
+| Return difference vs SPY | A simple difference, not alpha. The alpha test is the factor regression in section 7. |
 
-## 14. Limitations of the data and the backtest
+## 10. Limitations
 
-- **The demo data is fabricated.** It is survivorship-free by construction, but it is not a market. Nothing about it says anything about real momentum returns.
-- **Alpaca data is not point-in-time.**
-  - The universe comes from today's asset list, and optionally from today's liquidity ranking, so delisted losers are missing.
-  - Backtests on it are survivorship-biased and look-ahead-biased in their selection. The UI shows a permanent warning.
-- **Universe selection bias on Alpaca.** By default the universe is *today's* 600 most liquid common stocks. That bias massively inflates long-winner results.
-  In one run from 2017-01 to 2026-09, long-only v1 showed +2,798%, which is not credible.
-  For long-short, the short book contains only losers that *survived*, and those tend to rebound. This biases short-side results *downward*.
-  Treat all historical results on this data as illustrations, not evidence.
-- **Shorting realism.** Borrow availability, locates, recalls, hard-to-borrow fees, short-sale restrictions, margin calls and interest on short proceeds are not modelled. Borrow cost is a flat assumption.
-- **Stop-losses** are checked on daily closes only, not intraday, and fill at the next open, which can gap well beyond the stop level.
-- **Security classification** on Alpaca is heuristic (name/symbol patterns), so some ETFs or preferreds may slip through, or some common stocks may be excluded.
-- **Costs are assumptions**, not observed executions:
-  - Opening auctions can be less liquid than assumed.
-  - Market impact is not modelled.
-  - There are no borrow or fee effects, because the strategy is long-only.
-- **Dividends** are credited on the ex-date; the real pay date is later. **Delisting proceeds** are assumed to be the last close.
-- **Taxes, fees, cash interest and FX** are not modelled.
-- **Corporate actions** beyond splits and cash dividends (spin-offs, mergers, symbol changes, rights) are not modelled.
-- Daily bars only; there are no intraday data or live quotes.
-- One strategy, one rebalance frequency and one account. The engine is kept simple and auditable on purpose.
+- **Alpaca data is not point-in-time.** The universe is *today's* 600 most liquid stocks, and delisted names are missing.
+  - Long-winner backtests are strongly inflated: an earlier long-only run on this data showed +2,798%.
+  - The short book is biased the other way, because only losers that survived are in the data.
+  - Treat all historical results on this data as illustrations. Use Norgate (section 11) for an unbiased study.
+- **SEC SIC sectors** are current codes, not point-in-time. The SIC → sector mapping is approximate; for example, SIC 7370 puts Alphabet and Meta in Information Technology.
+- **The hard-to-borrow screen** in backtests is a liquidity stand-in. Real borrow availability, recalls, locates and hard-to-borrow fees are not modelled. Live orders check Alpaca's easy-to-borrow flag instead.
+- **Costs are assumptions.** Opening-auction liquidity, market impact and interest on short proceeds are not modelled.
+- **Sizes are small.** With $100k and 50–100 names per side, many positions are only a few shares, so rounding noise is noticeable.
+- **Stops are checked on daily closes** and fill at the next open, which can gap past the stop.
+- **Automation depends on this PC being on** at the scheduled times. Missed windows fall back to late market orders or the next run.
+- **The factor data lags** by about 1–2 months, and the most recent months are excluded from the alpha test.
 
-## 15. Roadmap: optional broker paper-account integration
+## 11. Norgate Data (point-in-time Russell 1000)
 
-This version deliberately has **no order routing**. A future, opt-in integration with a broker's *paper* account, such as Alpaca paper trading, should look like this:
+`MARKET_DATA_PROVIDER=norgate` switches to `NorgateProvider`. It requires:
 
-1. **A separate `BrokerAdapter` interface** in its own module, next to `MarketDataProvider`, with read-only account and positions calls first.
-2. **Reconciliation before orders.** Show internal-ledger vs broker-paper positions and cash side by side and flag differences, still without sending anything.
-3. **Explicit, per-plan submission.**
-   - A second, separately confirmed action ("Submit to broker PAPER account") on an already-applied plan.
-   - Orders use market-on-open (OPG) or limit orders, with idempotent client order IDs derived from the plan ID, so a plan can never be submitted twice.
-4. **Hard guards.**
-   - Refuse any base URL that is not the broker's paper endpoint.
-   - Use an environment flag that defaults to off.
-   - Never store keys outside `.env`.
-   - Log every request and response in `system_events`.
-5. **Fill import.** Store broker paper fills in their own table. Never overwrite the internal simulated fills.
-   Compare the two to measure the real slippage against the 10 bps assumption.
-6. **Live-money trading remains out of scope.**
+- a Norgate Data subscription that includes historical index constituents
+- the Norgate Data Updater running on Windows
+- `pip install norgatedata` in `backend/.venv`
 
-## 16. Configuration reference
+What it provides:
 
-All settings are read from `.env` in the project root; see `.env.example`.
+- The **Russell 1000 Current & Past** watchlist, including delisted stocks.
+- Unadjusted bars. Splits are derived from capital-adjusted vs unadjusted closes, and dividends come from the Dividend column.
+- **Point-in-time index membership intervals**, which drive eligibility (`not_in_index`). The survivorship warning disappears.
+
+Tell the scheduler which provider to trade on by keeping `MARKET_DATA_PROVIDER` set. Paper orders still go to Alpaca, and symbols are matched by ticker.
+
+**Status:** implemented against Norgate's documented Python API and unit-tested with a simulated `norgatedata` module. **It has not been run against a real Norgate installation**, because none was available.
+
+## 12. Architecture and data flow
+
+```
+ Alpaca Market Data / Norgate ──► data/ (provider, store, panel)      SEC EDGAR ──► data/sectors.py
+                                         │                             Ken French ──► backtest/factors.py
+                                         ▼
+          strategy/  composite.py · signals.py · long_short.py (books, sizing, sector QP) · execution.py
+               │                                   │
+               ▼                                   ▼
+   backtest/engine.py + runner.py         ledger/paper.py (model ledger)
+               │                                   │
+               └──────────► automation.py ◄────────┘──► broker/alpaca_paper.py ──► Alpaca PAPER account
+                                   │
+                    SQLite data/momentum.db (migrations, append-only ledger triggers)
+                                   │
+            FastAPI api/ ──► React + TypeScript dashboard (Mantine, ECharts, TanStack)
+```
+
+The tables that were added for this version:
+
+- `universe_membership`: point-in-time index intervals.
+- `broker_orders`: every order with its client id, status, fills and reason.
+- `broker_equity`, `broker_positions`, `broker_account_snapshots`: the Alpaca mirror.
+- `automation_runs`: a step-by-step log of each cycle.
+- `app_settings`: the automation switch.
+- Signal rows now also store the composite components, sector and 60-day ADV.
+
+## 13. Tests
+
+```bash
+npm test              # backend pytest suite + frontend type-check
+npm run test:backend
+```
+
+There are 127 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
+
+- **Composite signal:** winsorizing, the FIP arithmetic, residual momentum rewarding recent idiosyncratic drift but not beta, sector demeaning, and ranking by composite vs 12–1.
+- **Books and sizing:** the hard-to-borrow screen, the sector-neutral QP (limits, gross, beta, caps, and the reduced-gross fallback), the capacity warning, and loading of legacy configs.
+- **Data sources:** the SIC → sector mapping, the SEC client (User-Agent, and sectors surviving a refresh), and Norgate's split/dividend/membership/delisting mapping.
+- **Costs:** ACT/360 borrow fees.
+- **Alpha test:** Ken French parsing and Newey-West (matches OLS and White's estimator at lag 0), plus the full/half-sample alpha test.
+- **Automation:** opening-auction submission sized from equity, idempotency, dry run, both kill switches, stale-data blocking, stop-loss on actual shorts, flip splitting, the submission-window rules, and the paper-host lock.
+
+## 14. Git and GitHub
+
+The repository is pushed to the private GitHub repo `janwernli/JMW-Systematic` (`origin`).
+
+```bash
+git add -A && git commit -m "Describe the change" && git push
+```
+
+`.gitignore` excludes the following, so they are never committed: `.env` (keys), `data/` (database, factor cache), `logs/`, virtual environments, `node_modules` and build output.
+
+## 15. Configuration reference
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `APP_HOST` | `127.0.0.1` | Bind address. Keep this at localhost. |
-| `APP_PORT` | `8765` | Backend port. The Vite proxy reads the same value. |
-| `APP_CORS_ORIGINS` | `http://127.0.0.1:5173,http://localhost:5173` | Allowed dev origins |
-| `DATABASE_PATH` | `./data/momentum.db` | SQLite file (git-ignored) |
-| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `json` | Structured logs (`text` for human-readable) |
-| `MARKET_DATA_PROVIDER` | `demo` | `demo` or `alpaca` |
-| `ALPACA_API_KEY_ID`, `ALPACA_API_SECRET_KEY` | — | Server-side only |
+| `APP_HOST` / `APP_PORT` | `127.0.0.1` / `8765` | Local server |
+| `DATABASE_PATH` | `./data/momentum.db` | SQLite file |
+| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `json` | Logging |
+| `MARKET_DATA_PROVIDER` | `alpaca` | `alpaca` or `norgate` |
+| `ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY` | — | Paper keys (data + trading) |
 | `ALPACA_DATA_FEED` | `sip` | `sip` or `iex` |
-| `ALPACA_HISTORY_START` | `2016-01-01` | First date to import |
-| `ALPACA_UNIVERSE_FILE` | — | Optional symbol list |
-| `ALPACA_MAX_SYMBOLS` | `600` | Universe size when no file is given |
-| `DEMO_AUTOSEED` | `true` | Seed the demo data, backtest and portfolio on first start |
+| `ALPACA_HISTORY_START` / `ALPACA_MAX_SYMBOLS` / `ALPACA_UNIVERSE_FILE` | `2016-01-01` / `600` / — | First-import universe |
+| `ALPACA_PAPER_TRADING_URL` | `https://paper-api.alpaca.markets` | Any other host is refused |
+| `BROKER_TRADING_ENABLED` | `false` | Master switch for sending paper orders |
+| `SEC_USER_AGENT` | — | "Name contact@email" (SEC requirement) |
+| `NORGATE_INDEX` / `NORGATE_HISTORY_START` | `Russell 1000` / `2000-01-01` | Norgate provider |
 
-## 17. Troubleshooting
+## 16. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `npm : File ...npm.ps1 cannot be loaded because running scripts is disabled` | Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use `npm.cmd`. |
-| `port 8765 ... already in use` | Set another port in `.env`, e.g. `APP_PORT=8766`, and restart. The frontend follows automatically. |
-| `Python virtual environment not found` | Run `npm run setup`. |
-| npm warns about `esbuild` install scripts not being approved | Harmless. esbuild ships its binary as a platform package. If the build fails, run `npm --prefix frontend install-scripts approve esbuild`. |
-| UI shows "Backend / data provider problem" | The backend is not running, or `MARKET_DATA_PROVIDER=alpaca` is set without keys. Check the terminal log. |
-| You want a clean slate | Stop the app, delete `data/momentum.db*`, and start again. The demo will re-seed. |
+| `npm.ps1 cannot be loaded` | Run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or use `npm.cmd`. |
+| Port 8765 in use | Set `APP_PORT=8766` in `.env`. |
+| Automation run says **STALE** | The data doesn't reach the latest completed session yet. It usually resolves at the next run; check `logs/daily.log`. |
+| Order `rejected` | Its reason is shown on the Alpaca Paper page, e.g. a market-on-open order outside 19:00–09:28 ET or insufficient buying power. |
+| Short `skipped` | Not easy-to-borrow at Alpaca at order time. It is recorded and retried at the next signal. |
+| `SEC_USER_AGENT must be set` | Add a name and e-mail to `.env`, then run `npm run sectors`. |
+| Norgate error | Install the Norgate Data Updater and run `pip install norgatedata` in `backend/.venv`. |

@@ -6,7 +6,8 @@ import { ApiError } from "../api/client";
 import { arrow, signClass } from "../lib/format";
 
 const LABEL_COLOR: Record<string, string> = {
-  "Demo Data": "yellow",
+  "Alpaca Paper": "blue",
+  "End-of-Day Market Data": "cyan",
   "Delayed Market Data": "cyan",
   Backtest: "violet",
   "Paper Simulation": "teal",

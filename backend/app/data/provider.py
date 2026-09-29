@@ -1,6 +1,6 @@
 """The MarketDataProvider interface.
 
-Every data source (demo fixtures, Alpaca, ...) is isolated behind this interface.
+Every data source (Alpaca, Norgate, test fixtures) is isolated behind this interface.
 Providers deliver *raw* (unadjusted) daily OHLCV bars plus explicit corporate
 actions (splits and cash dividends). All adjustment is done by our own code from
 those documented fields, so the same adjustment logic is used for every provider

@@ -9,6 +9,7 @@ import {
   IconFlask,
   IconLayoutDashboard,
   IconListNumbers,
+  IconRobot,
   IconWallet,
 } from "@tabler/icons-react";
 import { usePlan, useStatus } from "../api/hooks";
@@ -16,8 +17,9 @@ import { DataLabel } from "./ui";
 
 const NAV = [
   { to: "/", label: "Command Center", icon: IconLayoutDashboard },
+  { to: "/trading", label: "Alpaca Paper", icon: IconRobot },
   { to: "/universe", label: "Universe & Rankings", icon: IconListNumbers },
-  { to: "/portfolio", label: "Portfolio", icon: IconWallet },
+  { to: "/portfolio", label: "Model Portfolio", icon: IconWallet },
   { to: "/rebalance", label: "Rebalance Desk", icon: IconArrowsExchange },
   { to: "/research", label: "Research Lab", icon: IconFlask },
   { to: "/ledger", label: "Ledger & Diagnostics", icon: IconBook2 },
@@ -90,7 +92,7 @@ export function Layout() {
             <Text fw={700} size="sm" style={{ letterSpacing: "0.14em" }}>
               MOMENTUM<span style={{ color: "#3987e5" }}>·</span>TERMINAL
             </Text>
-            <Text size="xs" c="dimmed" visibleFrom="md">US equities · 12–1 cross-sectional momentum · long-short / long-only</Text>
+            <Text size="xs" c="dimmed" visibleFrom="md">US equities · long-short composite momentum · Alpaca paper</Text>
           </Group>
           <Group gap="md" wrap="nowrap">
             <Clock />
@@ -136,18 +138,13 @@ export function Layout() {
           <Group gap={6} p={8} wrap="nowrap" align="flex-start">
             <IconAdjustmentsHorizontal size={14} color="#7c848d" style={{ flexShrink: 0, marginTop: 2 }} />
             <Text size="10px" c="dimmed" lh={1.4}>
-              Research & internal paper simulation only. No broker connection, no real orders. Not investment advice.
+              Research and Alpaca PAPER trading only (no real money). Not investment advice.
             </Text>
           </Group>
         </AppShell.Section>
       </AppShell.Navbar>
 
       <AppShell.Main>
-        {status?.mode === "demo" && (
-          <div className="demo-ribbon" role="status">
-            DEMO DATA — synthetic prices for fictional tickers (containing digits). Nothing here is real market data or real performance.
-          </div>
-        )}
         {status?.provider && !status.provider.point_in_time_universe && (
           <div className="survivor-ribbon" role="alert">
             SURVIVORSHIP BIAS: {status.provider.survivorship_note}

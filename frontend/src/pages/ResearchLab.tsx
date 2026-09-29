@@ -4,7 +4,7 @@ import { IconPlayerPlay } from "@tabler/icons-react";
 import { useQueries } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
 import { api, type S, type StrategyConfig } from "../api/client";
-import { useLaunchRun, useResearchDefaults, useRun, useRunMonthly, useRunRebalances, useRunSeries, useRunTrades, useRuns } from "../api/hooks";
+import { useLaunchRun, useResearchDefaults, useRun, useRunAlpha, useRunMonthly, useRunRebalances, useRunSeries, useRunTrades, useRuns, type AlphaFit } from "../api/hooks";
 import { DataTable } from "../components/DataTable";
 import { EChart, baseOption, lineSeries, timeAxis, valueAxis, zoom } from "../components/EChart";
 import { DrawdownChart, EquityChart, MonthlyHeatmap } from "../components/charts";
@@ -106,20 +106,27 @@ function SettingsForm({ d, onLaunched }: { d: S["ResearchDefaults"]; onLaunched:
     value: +(((cfg[k] as number) ?? 0) * 100).toFixed(4),
     onChange: (v: string | number) => setCfg((c) => ({ ...c, [k]: v === "" ? c[k] : Number(v) / 100 })),
   });
-  const ls = cfg.mode === "long_short";
+  const ls = true;
+  const warn = configWarnings(cfg);
   return (
     <Panel title="Backtest settings" label="Backtest"
       source={`Dates are NYSE sessions within stored data (${d.earliest_start} … ${d.latest_end}); the first ${d.config.lookback_sessions} sessions are needed for the lookback. Costs and borrow fees are ASSUMPTIONS, not observed executions.`}>
       <Stack gap={6}>
-        <SegmentedControl fullWidth value={cfg.mode} onChange={(v) => setCfg((c) => ({ ...c, mode: v as StrategyConfig["mode"] }))}
-          data={[{ value: "long_short", label: "Long-short v2" }, { value: "long_only", label: "Long-only v1" }]} />
+        <SegmentedControl fullWidth value={cfg.signal} onChange={(v) => setCfg((c) => ({ ...c, signal: v as StrategyConfig["signal"] }))}
+          data={[{ value: "composite", label: "Composite signal" }, { value: "momentum_12_1", label: "Plain 12-1" }]} />
+        {cfg.signal === "composite" && (
+          <SimpleGrid cols={3} spacing={6}>
+            <NumberInput label="Residual %" {...pct("w_residual")} min={0} max={100} suffix="%" />
+            <NumberInput label="Sector-dm %" {...pct("w_sector_demeaned")} min={0} max={100} suffix="%" />
+            <NumberInput label="FIP %" {...pct("w_fip")} min={0} max={100} suffix="%" />
+          </SimpleGrid>
+        )}
         <SimpleGrid cols={2} spacing={6}>
           <TextInput label="Start" type="date" value={cfg.start_date ?? ""} min={d.earliest_start} max={d.latest_end}
             onChange={(e) => { const v = e.currentTarget.value; setCfg((c) => ({ ...c, start_date: v || null })); }} />
           <TextInput label="End" type="date" value={cfg.end_date ?? ""} min={d.earliest_start} max={d.latest_end}
             onChange={(e) => { const v = e.currentTarget.value; setCfg((c) => ({ ...c, end_date: v || null })); }} />
           <NumberInput label="Initial capital $" value={cfg.initial_capital} onChange={num("initial_capital")} min={1000} step={10000} thousandSeparator="," />
-          {!ls && <NumberInput label="Holdings (top N)" value={cfg.top_n} onChange={num("top_n")} min={1} max={1000} />}
           <NumberInput label="Min ADV $" value={cfg.min_adv_usd} onChange={num("min_adv_usd")} min={0} step={1e6} thousandSeparator="," />
           <NumberInput label="Min price $" value={cfg.min_price} onChange={num("min_price")} min={0} decimalScale={2} />
           <NumberInput label="Slippage (bps)" value={cfg.slippage_bps} onChange={num("slippage_bps")} min={0} max={500} />
@@ -144,7 +151,11 @@ function SettingsForm({ d, onLaunched }: { d: S["ResearchDefaults"]; onLaunched:
               <NumberInput label="Max gross / side %" {...pct("max_side_gross")} min={1} max={200} suffix="%" />
               <NumberInput label="Cap per long %" {...pct("max_long_weight")} min={0.1} max={100} decimalScale={2} suffix="%" />
               <NumberInput label="Cap per short %" {...pct("max_short_weight")} min={0.1} max={100} decimalScale={2} suffix="%" />
+              <NumberInput label="Max sector net %" {...pct("max_sector_net")} min={0} max={100} decimalScale={1} suffix="%" disabled={!cfg.sector_neutral} />
+              <NumberInput label="HTB exclude %" {...pct("htb_exclude_pct")} min={0} max={90} suffix="%" />
             </SimpleGrid>
+            <Switch size="xs" label="Sector neutral (|long − short| per sector)" checked={cfg.sector_neutral}
+              onChange={(e) => { const v = e.currentTarget.checked; setCfg((c) => ({ ...c, sector_neutral: v })); }} />
             <Divider label="Short risk" labelPosition="left" />
             <SimpleGrid cols={2} spacing={6}>
               <NumberInput label="Borrow fee %/yr" {...pct("borrow_fee_annual")} min={0} max={100} decimalScale={2} suffix="%" />
@@ -157,8 +168,9 @@ function SettingsForm({ d, onLaunched }: { d: S["ResearchDefaults"]; onLaunched:
               onChange={(e) => { const v = e.currentTarget.checked; setCfg((c) => ({ ...c, crash_guard: v })); }} />
           </>
         )}
+        {warn.map((w, i) => <Alert key={i} color="yellow" variant="light" p={6}><Text size="10px">{w}</Text></Alert>)}
         <TextInput label="Run name (optional)" value={name} onChange={(e) => setName(e.currentTarget.value)}
-          placeholder={ls ? `L/S ${Math.round(cfg.long_pct * 100)}/${Math.round(cfg.short_pct * 100)} vol ${Math.round(cfg.target_vol * 100)}%` : `Long-only top ${cfg.top_n}`} />
+          placeholder={`${cfg.signal === "composite" ? "Composite" : "12-1"} L/S vol ${Math.round(cfg.target_vol * 100)}%`} />
         <Button leftSection={<IconPlayerPlay size={14} />} loading={launch.isPending}
           onClick={() => launch.mutate({ config: cfg, name: name || null }, { onSuccess: (r) => onLaunched(r.id) })}>
           Run backtest
@@ -167,6 +179,18 @@ function SettingsForm({ d, onLaunched }: { d: S["ResearchDefaults"]; onLaunched:
       </Stack>
     </Panel>
   );
+}
+
+/** Mirrors StrategyConfig.config_warnings() on the server so the warning shows while editing. */
+function configWarnings(c: StrategyConfig): string[] {
+  const out: string[] = [];
+  const capS = c.min_names_per_side * c.max_short_weight;
+  if (capS < c.max_side_gross - 1e-12)
+    out.push(`Short caps limit the short book: ${c.min_names_per_side} × ${(c.max_short_weight * 100).toFixed(2)}% = ${(capS * 100).toFixed(1)}% < max side gross ${(c.max_side_gross * 100).toFixed(0)}% — the vol target may be unreachable.`);
+  const capL = c.min_names_per_side * c.max_long_weight;
+  if (capL < c.max_side_gross - 1e-12)
+    out.push(`Long caps limit the long book: ${c.min_names_per_side} × ${(c.max_long_weight * 100).toFixed(2)}% = ${(capL * 100).toFixed(1)}% < max side gross.`);
+  return out;
 }
 
 function RunView({ id }: { id: number }) {
@@ -204,7 +228,7 @@ function RunView({ id }: { id: number }) {
         <Kpi label="Turnover" value={fmtPct(m.avg_turnover, 1)} sub={`per rebalance · ${m.annualized_turnover ? `${fmtPct(m.annualized_turnover, 0)}/yr` : "—"}`} tip="One-way: (buys + sells) / 2 / NAV at the rebalance open." />
         <Kpi label="Assumed costs" value={fmtUsd(m.total_costs + (m.borrow_fees ?? 0))}
           sub={m.borrow_fees ? `trading ${fmtUsd(m.total_costs)} · borrow ${fmtUsd(m.borrow_fees)}` : `drag ${fmtPct(m.cost_drag, 2)} of capital`} />
-        {m.mode === "long_short" && (
+        {(
           <>
             <Kpi label="Avg gross / net" value={`${fmtPct(m.avg_gross_exposure, 0)} / ${fmtPct(m.avg_net_exposure, 0, true)}`}
               sub={`long ${fmtPct(m.avg_long_gross, 0)} · short ${fmtPct(m.avg_short_gross, 0)}`}
@@ -220,7 +244,8 @@ function RunView({ id }: { id: number }) {
       <Tabs defaultValue={params.get("tab") ?? "equity"} keepMounted={false} variant="outline" radius="sm">
         <Tabs.List>
           <Tabs.Tab value="equity">Equity & drawdown</Tabs.Tab>
-          {m.mode === "long_short" && <Tabs.Tab value="exposure">Exposure</Tabs.Tab>}
+          <Tabs.Tab value="exposure">Exposure</Tabs.Tab>
+          <Tabs.Tab value="alpha">Factor alpha</Tabs.Tab>
           <Tabs.Tab value="rolling">Rolling metrics</Tabs.Tab>
           <Tabs.Tab value="monthly">Monthly returns</Tabs.Tab>
           <Tabs.Tab value="trades">Trades</Tabs.Tab>
@@ -243,6 +268,9 @@ function RunView({ id }: { id: number }) {
         </Tabs.Panel>
         <Tabs.Panel value="exposure" pt={10}>
           {!pts.length ? <Loading /> : <ExposureChart pts={pts} />}
+        </Tabs.Panel>
+        <Tabs.Panel value="alpha" pt={10}>
+          <AlphaPanel id={id} />
         </Tabs.Panel>
         <Tabs.Panel value="rolling" pt={10}>
           {!pts.length ? <Loading /> : <Rolling pts={pts} bench={bench} />}
@@ -289,6 +317,46 @@ gross NAV         net NAV + cumulative slippage & commission (not compounded)`}<
         </Tabs.Panel>
       </Tabs>
     </>
+  );
+}
+
+function AlphaPanel({ id }: { id: number }) {
+  const { data, isLoading, error } = useRunAlpha(id, true);
+  if (isLoading) return <Loading what="factor regression (downloads Ken French data on first use)" />;
+  if (error || !data) return <ErrorView error={error} />;
+  const cols: [string, AlphaFit | null][] = [["Full sample", data.full], ["First half", data.first_half], ["Second half", data.second_half]];
+  const factors = ["Mkt-RF", "SMB", "HML", "RMW", "CMA", "Mom"];
+  const t = (v?: number) => (v == null ? "—" : v.toFixed(2));
+  return (
+    <Panel title="Fama-French 5 + momentum regression" label="Backtest"
+      source={`${data.model}. Source: ${data.source}. Alpha is the monthly intercept (×12 annualized); |t| > 2 is conventionally significant, but multiple testing and a biased universe (Alpaca: today's liquid stocks) make even that weak evidence.`}>
+      <div style={{ overflowX: "auto" }}>
+        <table className="dt" style={{ minWidth: 640 }}>
+          <thead>
+            <tr><th />{cols.map(([n, f]) => <th key={n} style={{ textAlign: "right" }}>{n}{f ? ` (${f.start}–${f.end}, n=${f.months})` : ""}</th>)}</tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>Alpha (annualized)</b></td>
+              {cols.map(([n, f]) => <td key={n} className="num" style={{ textAlign: "right" }}>{f ? <Signed v={f.alpha_annual}>{fmtPct(f.alpha_annual, 2, true)}</Signed> : "n/a"}</td>)}
+            </tr>
+            <tr>
+              <td>t-stat (Newey-West)</td>
+              {cols.map(([n, f]) => <td key={n} className="num" style={{ textAlign: "right" }}>{f ? <span className={Math.abs(f.t_alpha) >= 2 ? "" : "muted"}>{t(f.t_alpha)}</span> : "—"}</td>)}
+            </tr>
+            {factors.map((fac) => (
+              <tr key={fac}>
+                <td>β {fac}</td>
+                {cols.map(([n, f]) => <td key={n} className="num" style={{ textAlign: "right" }}>{f ? `${t(f.betas[fac])} (t ${t(f.t_betas[fac])})` : "—"}</td>)}
+              </tr>
+            ))}
+            <tr><td>R²</td>{cols.map(([n, f]) => <td key={n} className="num" style={{ textAlign: "right" }}>{f?.r2 != null ? f.r2.toFixed(2) : "—"}</td>)}</tr>
+            <tr><td>NW lags</td>{cols.map(([n, f]) => <td key={n} className="num" style={{ textAlign: "right" }}>{f ? f.nw_lags : "—"}</td>)}</tr>
+          </tbody>
+        </table>
+      </div>
+      {data.notes.map((n, i) => <Text key={i} size="10px" c="dimmed" mt={4}>{n}</Text>)}
+    </Panel>
   );
 }
 
@@ -447,8 +515,8 @@ function Compare({ ids, onClear }: { ids: number[]; onClear: () => void }) {
           cols={[
             { id: "id", header: "Run", value: (r) => r.run.id, cell: (r) => <b>#{r.run.id} {r.run.name}</b> },
             { id: "per", header: "Period", value: (r) => r.m.start_session, cell: (r) => `${r.m.start_session} → ${r.m.end_session}` },
-            { id: "mode", header: "Mode", value: (r) => r.run.config.mode, cell: (r) => (r.run.config.mode === "long_short" ? "L/S" : "Long") },
-            { id: "n", header: "Top N", align: "right", value: (r) => r.run.config.top_n, cell: (r) => (r.run.config.mode === "long_short" ? "—" : r.run.config.top_n) },
+            { id: "sig", header: "Signal", value: (r) => r.run.config.signal, cell: (r) => (r.run.config.signal === "composite" ? "Composite" : "12-1") },
+            { id: "sn", header: "Sector-neutral", value: (r) => String(r.run.config.sector_neutral), cell: (r) => (r.run.config.sector_neutral ? `±${(r.run.config.max_sector_net * 100).toFixed(0)}%` : "off") },
             { id: "slip", header: "Slip bps", align: "right", value: (r) => r.run.config.slippage_bps },
             { id: "adv", header: "Min ADV", align: "right", value: (r) => r.run.config.min_adv_usd, cell: (r) => fmtMillions(r.run.config.min_adv_usd) },
             { id: "tr", header: "Net TR", align: "right", value: (r) => r.m.net.total_return, cell: (r) => <Signed v={r.m.net.total_return}>{fmtPct(r.m.net.total_return, 1, true)}</Signed> },

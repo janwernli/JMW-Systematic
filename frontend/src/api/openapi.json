@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Momentum Terminal API",
-    "description": "US equities 12-1 momentum research and INTERNAL paper simulation. No brokerage connectivity.",
+    "description": "US equities long-short momentum: research, model ledger and Alpaca PAPER trading automation.",
     "version": "1.0.0"
   },
   "paths": {
@@ -102,7 +102,7 @@
           "system"
         ],
         "summary": "Refresh",
-        "description": "Re-import from the configured provider in the background (idempotent upserts).\n\nLive providers fetch from 10 sessions before the latest stored session, so late\ncorrections are picked up; the demo fixture is simply re-imported.",
+        "description": "Re-import from the configured provider in the background (idempotent upserts).\n\nLive providers fetch from 10 sessions before the latest stored session, so late\ncorrections are picked up.",
         "operationId": "refresh_api_data_refresh_post",
         "responses": {
           "200": {
@@ -427,30 +427,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/paper/seed-demo": {
-      "post": {
-        "tags": [
-          "portfolio"
-        ],
-        "summary": "Reseed Demo",
-        "description": "Recreate the demo portfolio (archiving the current one). Demo mode only.",
-        "operationId": "reseed_demo_api_paper_seed_demo_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Reseed Demo Api Paper Seed Demo Post"
                 }
               }
             }
@@ -947,6 +923,51 @@
         }
       }
     },
+    "/api/research/runs/{run_id}/alpha": {
+      "get": {
+        "tags": [
+          "research"
+        ],
+        "summary": "Run Alpha",
+        "description": "Fama-French 5 + momentum regression of the run's monthly excess returns (Newey-West t-stats).",
+        "operationId": "run_alpha_api_research_runs__run_id__alpha_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Run Alpha Api Research Runs  Run Id  Alpha Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/research/runs/{run_id}/rebalances": {
       "get": {
         "tags": [
@@ -1261,6 +1282,216 @@
           }
         }
       }
+    },
+    "/api/broker/overview": {
+      "get": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Overview",
+        "operationId": "overview_api_broker_overview_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrokerOverview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/broker/orders": {
+      "get": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Orders",
+        "operationId": "orders_api_broker_orders_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrokerOrdersPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/automation/runs": {
+      "get": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Runs",
+        "operationId": "runs_api_automation_runs_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AutomationRun"
+                  },
+                  "title": "Response Runs Api Automation Runs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/automation/enabled": {
+      "put": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Toggle",
+        "operationId": "toggle_api_automation_enabled_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Toggle Api Automation Enabled Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/automation/run": {
+      "post": {
+        "tags": [
+          "broker"
+        ],
+        "summary": "Run Now",
+        "description": "Run the daily cycle in the background (dry run by default: computes orders, sends nothing).",
+        "operationId": "run_now_api_automation_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Run Now Api Automation Run Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1312,6 +1543,501 @@
           "pending_plan_id"
         ],
         "title": "AdvanceResponse"
+      },
+      "AutomationRun": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "trigger": {
+            "type": "string",
+            "title": "Trigger"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Steps"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "started_at",
+          "finished_at",
+          "trigger",
+          "dry_run",
+          "status",
+          "summary",
+          "steps"
+        ],
+        "title": "AutomationRun"
+      },
+      "AutomationRunRequest": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "AutomationRunRequest"
+      },
+      "BrokerOrder": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "client_order_id": {
+            "type": "string",
+            "title": "Client Order Id"
+          },
+          "broker_order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Order Id"
+          },
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "position_effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Position Effect"
+          },
+          "qty": {
+            "type": "integer",
+            "title": "Qty"
+          },
+          "time_in_force": {
+            "type": "string",
+            "title": "Time In Force"
+          },
+          "intended_session": {
+            "type": "string",
+            "title": "Intended Session"
+          },
+          "ref_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref Price"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "filled_qty": {
+            "type": "integer",
+            "title": "Filled Qty"
+          },
+          "filled_avg_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filled Avg Price"
+          },
+          "filled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filled At"
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "client_order_id",
+          "broker_order_id",
+          "origin",
+          "plan_id",
+          "symbol",
+          "side",
+          "position_effect",
+          "qty",
+          "time_in_force",
+          "intended_session",
+          "ref_price",
+          "status",
+          "status_reason",
+          "filled_qty",
+          "filled_avg_price",
+          "filled_at",
+          "submitted_at",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "BrokerOrder"
+      },
+      "BrokerOrdersPage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/BrokerOrder"
+            },
+            "type": "array",
+            "title": "Rows"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "limit",
+          "offset",
+          "rows"
+        ],
+        "title": "BrokerOrdersPage"
+      },
+      "BrokerOverview": {
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "title": "Connected"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "account": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account"
+          },
+          "synced_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synced At"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/BrokerPosition"
+            },
+            "type": "array",
+            "title": "Positions"
+          },
+          "long_value": {
+            "type": "number",
+            "title": "Long Value"
+          },
+          "short_value": {
+            "type": "number",
+            "title": "Short Value"
+          },
+          "equity_history": {
+            "items": {
+              "$ref": "#/components/schemas/EquityPoint"
+            },
+            "type": "array",
+            "title": "Equity History"
+          },
+          "trading_enabled_env": {
+            "type": "boolean",
+            "title": "Trading Enabled Env"
+          },
+          "automation_enabled": {
+            "type": "boolean",
+            "title": "Automation Enabled"
+          },
+          "last_runs": {
+            "items": {
+              "$ref": "#/components/schemas/AutomationRun"
+            },
+            "type": "array",
+            "title": "Last Runs"
+          },
+          "schedule_note": {
+            "type": "string",
+            "title": "Schedule Note"
+          },
+          "open_orders": {
+            "type": "integer",
+            "title": "Open Orders"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connected",
+          "error",
+          "account",
+          "synced_at",
+          "positions",
+          "long_value",
+          "short_value",
+          "equity_history",
+          "trading_enabled_env",
+          "automation_enabled",
+          "last_runs",
+          "schedule_note",
+          "open_orders"
+        ],
+        "title": "BrokerOverview"
+      },
+      "BrokerPosition": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "qty": {
+            "type": "integer",
+            "title": "Qty"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "avg_entry_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Entry Price"
+          },
+          "current_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Price"
+          },
+          "market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value"
+          },
+          "unrealized_pl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unrealized Pl"
+          },
+          "weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weight"
+          },
+          "model_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Weight"
+          },
+          "drift": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Drift"
+          },
+          "sector": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "qty",
+          "side",
+          "avg_entry_price",
+          "current_price",
+          "market_value",
+          "unrealized_pl",
+          "weight",
+          "model_weight",
+          "drift",
+          "sector"
+        ],
+        "title": "BrokerPosition"
       },
       "CashPage": {
         "properties": {
@@ -2156,6 +2882,55 @@
           "generated_at"
         ],
         "title": "DataQuality"
+      },
+      "EquityPoint": {
+        "properties": {
+          "session": {
+            "type": "string",
+            "title": "Session"
+          },
+          "equity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity"
+          },
+          "model_nav": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Nav"
+          },
+          "benchmark": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Benchmark"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session",
+          "equity",
+          "model_nav",
+          "benchmark"
+        ],
+        "title": "EquityPoint"
       },
       "EventModel": {
         "properties": {
@@ -4035,6 +4810,14 @@
           "config": {
             "$ref": "#/components/schemas/StrategyConfig"
           },
+          "config_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Config Warnings",
+            "default": []
+          },
           "earliest_start": {
             "type": "string",
             "title": "Earliest Start"
@@ -5038,31 +5821,23 @@
       },
       "StrategyConfig": {
         "properties": {
-          "mode": {
-            "type": "string",
-            "enum": [
-              "long_only",
-              "long_short"
-            ],
-            "title": "Mode",
-            "description": "Strategy variant",
-            "default": "long_short"
-          },
           "initial_capital": {
             "type": "number",
             "maximum": 10000000000.0,
             "exclusiveMinimum": 0.0,
             "title": "Initial Capital",
-            "description": "Starting virtual cash, USD",
+            "description": "Starting capital, USD",
             "default": 100000.0
           },
-          "top_n": {
-            "type": "integer",
-            "maximum": 1000.0,
-            "minimum": 1.0,
-            "title": "Top N",
-            "description": "Number of top-ranked eligible stocks to hold",
-            "default": 50
+          "signal": {
+            "type": "string",
+            "enum": [
+              "composite",
+              "momentum_12_1"
+            ],
+            "title": "Signal",
+            "description": "Ranking signal: composite (residual + sector-demeaned momentum + FIP) or plain 12-1",
+            "default": "composite"
           },
           "lookback_sessions": {
             "type": "integer",
@@ -5141,6 +5916,46 @@
             "title": "Min Session Coverage",
             "description": "Share of the point-in-time universe that must have a bar at the signal session; otherwise the rebalance is blocked",
             "default": 0.9
+          },
+          "w_residual": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "W Residual",
+            "description": "Composite weight: residual momentum",
+            "default": 0.6
+          },
+          "w_sector_demeaned": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "W Sector Demeaned",
+            "description": "Composite weight: sector-demeaned 12-1",
+            "default": 0.25
+          },
+          "w_fip": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "W Fip",
+            "description": "Composite weight: frog-in-the-pan (information discreteness)",
+            "default": 0.15
+          },
+          "residual_window_months": {
+            "type": "integer",
+            "maximum": 120.0,
+            "minimum": 12.0,
+            "title": "Residual Window Months",
+            "description": "Rolling regression window for residual momentum",
+            "default": 36
+          },
+          "winsor_sigma": {
+            "type": "number",
+            "maximum": 10.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Winsor Sigma",
+            "description": "Winsorize each component at mean \u00b1 this many std devs",
+            "default": 3.0
           },
           "long_pct": {
             "type": "number",
@@ -5252,7 +6067,21 @@
             "exclusiveMinimum": 0.0,
             "title": "Max Short Weight",
             "description": "Per-name cap on shorts, fraction of NAV",
-            "default": 0.01
+            "default": 0.015
+          },
+          "sector_neutral": {
+            "type": "boolean",
+            "title": "Sector Neutral",
+            "description": "Constrain net exposure per sector",
+            "default": true
+          },
+          "max_sector_net": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Max Sector Net",
+            "description": "Max |long - short| weight per sector, fraction of NAV",
+            "default": 0.02
           },
           "short_min_price": {
             "type": "number",
@@ -5261,12 +6090,28 @@
             "description": "Raw close must exceed this to be shorted, USD",
             "default": 10.0
           },
+          "htb_adv_window": {
+            "type": "integer",
+            "maximum": 252.0,
+            "minimum": 5.0,
+            "title": "Htb Adv Window",
+            "description": "Dollar-volume window for the hard-to-borrow screen",
+            "default": 60
+          },
+          "htb_exclude_pct": {
+            "type": "number",
+            "exclusiveMaximum": 1.0,
+            "minimum": 0.0,
+            "title": "Htb Exclude Pct",
+            "description": "Exclude the least liquid fraction of eligible stocks from the short book",
+            "default": 0.2
+          },
           "borrow_fee_annual": {
             "type": "number",
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Borrow Fee Annual",
-            "description": "Assumed borrow cost on short market value, per year",
+            "description": "Assumed borrow cost, per year, charged per calendar day / 360",
             "default": 0.005
           },
           "short_stop_loss": {
@@ -5348,13 +6193,13 @@
               }
             ],
             "title": "Benchmark Symbol",
-            "description": "Benchmark; default = provider's SPY (or demo stand-in)"
+            "description": "Benchmark; default = the provider's SPY"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "StrategyConfig",
-        "description": "All tunable inputs of the 12-1 momentum strategy.\n\nmode=\"long_only\"  -> v1: top_n winners, equal weight, cash-funded, no shorts.\nmode=\"long_short\" -> v2: decile winners long / decile losers short with a\n    rank buffer, inverse-volatility weights with per-name caps, beta-neutral\n    books scaled to a volatility target within gross limits, a momentum-crash\n    guard, a $10 short price floor, borrow fees and a short stop-loss.\nEvery backtest run and every paper-portfolio configuration version stores the\nfull JSON of this model."
+        "description": "All tunable inputs of the strategy.\n\nLong the strongest / short the weakest decile by the selected momentum signal, with a rank\nbuffer, inverse-volatility weights with per-name caps, beta- and sector-neutral books scaled\nto a volatility target within gross limits, a momentum-crash guard, a short price floor, a\nhard-to-borrow liquidity screen, borrow fees and a short stop-loss.\nEvery backtest run and every paper-portfolio configuration version stores the full JSON."
       },
       "SystemStatus": {
         "properties": {
@@ -5364,10 +6209,7 @@
           },
           "mode": {
             "type": "string",
-            "enum": [
-              "demo",
-              "live"
-            ],
+            "const": "live",
             "title": "Mode"
           },
           "data_label": {
@@ -5472,6 +6314,19 @@
           "bind_host"
         ],
         "title": "SystemStatus"
+      },
+      "ToggleRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "ToggleRequest"
       },
       "UniverseResponse": {
         "properties": {
@@ -5675,6 +6530,61 @@
             "type": "boolean",
             "title": "Selected"
           },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "resid_mom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resid Mom"
+          },
+          "sector_mom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sector Mom"
+          },
+          "fip": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fip"
+          },
+          "composite": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Composite"
+          },
           "side": {
             "anyOf": [
               {
@@ -5750,7 +6660,6 @@
         "required": [
           "symbol",
           "name",
-          "sector",
           "asset_type",
           "close_raw",
           "adv20",

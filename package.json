@@ -2,8 +2,10 @@
   "name": "momentum-terminal",
   "private": true,
   "version": "1.0.0",
-  "description": "US equities 12-1 momentum research & internal paper simulation (local only)",
-  "engines": { "node": ">=20" },
+  "description": "US equities long-short composite momentum: research, model ledger and automated Alpaca paper trading",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "setup": "node scripts/setup.mjs",
     "dev": "node scripts/dev.mjs",
@@ -15,6 +17,11 @@
     "test:backend": "node scripts/py.mjs -m pytest",
     "import-data": "node scripts/py.mjs -m app import-data",
     "advance": "node scripts/py.mjs -m app advance",
-    "gen:api": "node scripts/py.mjs -m app export-openapi ../frontend/src/api/openapi.json && npm --prefix frontend run gen:api"
+    "gen:api": "node scripts/py.mjs -m app export-openapi ../frontend/src/api/openapi.json && npm --prefix frontend run gen:api",
+    "daily": "node scripts/py.mjs -m app daily",
+    "daily:dry": "node scripts/py.mjs -m app daily --dry-run",
+    "sectors": "node scripts/py.mjs -m app sectors",
+    "schedule:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/schedule.ps1 -Install",
+    "schedule:remove": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/schedule.ps1 -Remove"
   }
 }

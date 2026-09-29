@@ -64,12 +64,10 @@ export function Universe() {
       <div className="kpi-strip">
         <Kpi label="Universe (point-in-time)" value={fmtNum(data.universe_count)} sub="common stocks listed at the session" />
         <Kpi label="Eligible" value={fmtNum(data.eligible_count)} sub={`price > $${data.config.min_price}, ADV ≥ ${fmtMillions(data.config.min_adv_usd)}`} />
-        {data.config.mode === "long_short" ? (
+        {(
           <Kpi label="Long / short book" value={`${fmtNum(data.diagnostics.long_names as number)} / ${fmtNum(data.diagnostics.short_names as number)}`}
             sub={`gross ${fmtPct(data.diagnostics.long_gross as number, 0)} / ${fmtPct(data.diagnostics.short_gross as number, 0)} · ex-ante vol ${fmtPct(data.diagnostics.ex_ante_vol as number, 1)}`}
             tip="Decile entry with a 30% buffer, inverse-vol weights with per-name caps, beta-neutral, scaled to the vol target." />
-        ) : (
-          <Kpi label="Selected" value={fmtNum(data.selected_count)} sub={`top ${data.config.top_n}, equal weight`} />
         )}
         <Kpi label="Bar coverage" value={fmtPct(data.coverage, 1)} sub={`min ${fmtPct(data.config.min_session_coverage, 0)} to rebalance`} />
         <Kpi label="Status" value={data.blocked_reason ? "BLOCKED" : "OK"} sub={data.blocked_reason ?? "data sufficient for ranking"} />
@@ -100,7 +98,13 @@ export function Universe() {
             { id: "sector", header: "Sector", value: (r) => r.sector },
             { id: "close", header: "Close $", align: "right", value: (r) => r.close_raw, cell: (r) => fmtPx(r.close_raw), tip: "Raw close at the signal session (USD)" },
             { id: "adv", header: "ADV20", align: "right", value: (r) => r.adv20, cell: (r) => fmtMillions(r.adv20), tip: "Trailing average daily dollar volume (USD millions)" },
+            { id: "score", header: "Score", align: "right", value: (r) => r.score, cell: (r) => (r.score == null ? "" : r.score.toFixed(2)),
+              tip: "Ranking score: the composite z-score (or plain 12-1 if selected in the paper config)" },
             { id: "mom", header: "12–1 mom", align: "right", value: (r) => r.momentum, cell: (r) => <Signed v={r.momentum}>{fmtPct(r.momentum, 1, true)}</Signed> },
+            { id: "res", header: "Resid", align: "right", value: (r) => r.resid_mom, cell: (r) => (r.resid_mom == null ? "" : r.resid_mom.toFixed(2)),
+              tip: "Residual momentum: 11-month residual sum / residual vol (36-month market + sector-ETF regression)" },
+            { id: "fip", header: "FIP", align: "right", value: (r) => r.fip, cell: (r) => (r.fip == null ? "" : fmtPct(r.fip, 0)),
+              tip: "Frog-in-the-pan: share of up days minus down days in the 12-1 window (= sgn(PRET)·(−ID))" },
             { id: "pct", header: "Pctile", align: "right", value: (r) => r.percentile, cell: (r) => (r.percentile == null ? "" : fmtPct(r.percentile, 0)),
               tip: "Momentum percentile among eligible stocks (0% = strongest)" },
             { id: "vol", header: "Vol", align: "right", value: (r) => r.vol, cell: (r) => (r.vol == null ? "" : fmtPct(r.vol, 0)), tip: "Annualized realized vol, trailing 126 sessions" },

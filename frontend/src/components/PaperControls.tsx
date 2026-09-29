@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Group, NumberInput, SegmentedControl, Stack, Text, TextInput, Tooltip } from "@mantine/core";
+import { Button, Group, NumberInput, Stack, Text, TextInput, Tooltip } from "@mantine/core";
 import { IconPlayerSkipForward, IconPlayerTrackNext, IconPlus, IconRefresh } from "@tabler/icons-react";
 import { usePaperMutations, useResearchDefaults, useStatus } from "../api/hooks";
 import { Empty } from "./ui";
@@ -41,15 +41,13 @@ export function InitPortfolio() {
   const { data: defaults } = useResearchDefaults();
   const [capital, setCapital] = useState<number | string>(100000);
   const [inception, setInception] = useState<string>("");
-  const [mode, setMode] = useState<"long_short" | "long_only">("long_short");
   return (
-    <Empty title="No internal virtual portfolio yet">
+    <Empty title="No model portfolio yet">
       <Stack gap={8} align="center" mt={6}>
         <Text size="xs" c="dimmed">
-          Funds a simulated portfolio with virtual cash at the close of the chosen session. No broker is involved.
+          The model portfolio is the internal theoretical track (fills at the open ± slippage). The daily automation creates it
+          automatically; the traded portfolio is your Alpaca paper account.
         </Text>
-        <SegmentedControl value={mode} onChange={(v) => setMode(v as typeof mode)}
-          data={[{ value: "long_short", label: "Long-short v2 (beta-neutral)" }, { value: "long_only", label: "Long-only v1" }]} />
         <Group gap={8} align="flex-end">
           <NumberInput label="Virtual capital (USD)" value={capital} onChange={setCapital} min={1000} step={10000} thousandSeparator="," w={170} />
           <TextInput label="Inception session" placeholder={status?.data_end ?? "latest"} type="date" value={inception}
@@ -57,7 +55,7 @@ export function InitPortfolio() {
           <Button leftSection={<IconPlus size={14} />} loading={m.init.isPending} disabled={!defaults}
             onClick={() => defaults && m.init.mutate({
               inception_session: inception || null,
-              config: { ...defaults.config, mode, initial_capital: Number(capital), start_date: null, end_date: null },
+              config: { ...defaults.config, initial_capital: Number(capital), start_date: null, end_date: null },
             })}>
             Initialize
           </Button>
@@ -66,11 +64,6 @@ export function InitPortfolio() {
           Strategy settings use the documented defaults and can be changed later under Rebalance Desk → Paper config
           (future plans only).
         </Text>
-        {status?.mode === "demo" && (
-          <Button variant="subtle" size="compact-xs" loading={m.reseed.isPending} onClick={() => m.reseed.mutate()}>
-            …or re-create the demo portfolio
-          </Button>
-        )}
       </Stack>
     </Empty>
   );

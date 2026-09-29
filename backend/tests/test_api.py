@@ -122,3 +122,14 @@ def test_model_ledger_equals_backtest(client):
                                                        "end_date": port["as_of_session"]})
     bt = run_backtest(ctx.panel(), ctx.calendar, cfg)
     assert list(bt.nav.index) == list(paper) and list(bt.nav["nav"]) == list(paper.values())
+
+
+def test_portfolio_screens_respond(client):
+    s = client.get("/api/portfolio/summary")
+    assert s.status_code == 200 and s.json()["long_gross"] is not None
+    p = client.get("/api/portfolio/positions")
+    assert p.status_code == 200 and p.json()["rows"]
+    assert any(r["side"] == "short" for r in p.json()["rows"])
+    for path in ("/api/rebalance/plans", "/api/ledger/fills", "/api/ledger/orders", "/api/ledger/cash",
+                 "/api/ledger/events", "/api/ledger/reproducibility", "/api/data/imports"):
+        assert client.get(path).status_code == 200, path

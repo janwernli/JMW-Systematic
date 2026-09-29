@@ -86,7 +86,7 @@ export interface paths {
          * @description Re-import from the configured provider in the background (idempotent upserts).
          *
          *     Live providers fetch from 10 sessions before the latest stored session, so late
-         *     corrections are picked up; the demo fixture is simply re-imported.
+         *     corrections are picked up.
          */
         post: operations["refresh_api_data_refresh_post"];
         delete?: never;
@@ -226,26 +226,6 @@ export interface paths {
         /** Paper Config Update */
         put: operations["paper_config_update_api_paper_config_put"];
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/paper/seed-demo": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reseed Demo
-         * @description Recreate the demo portfolio (archiving the current one). Demo mode only.
-         */
-        post: operations["reseed_demo_api_paper_seed_demo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -443,6 +423,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/research/runs/{run_id}/alpha": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Alpha
+         * @description Fama-French 5 + momentum regression of the run's monthly excess returns (Newey-West t-stats).
+         */
+        get: operations["run_alpha_api_research_runs__run_id__alpha_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/research/runs/{run_id}/rebalances": {
         parameters: {
             query?: never;
@@ -545,6 +545,94 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/broker/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Overview */
+        get: operations["overview_api_broker_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/broker/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Orders */
+        get: operations["orders_api_broker_orders_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/automation/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runs */
+        get: operations["runs_api_automation_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/automation/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Toggle */
+        put: operations["toggle_api_automation_enabled_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/automation/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Now
+         * @description Run the daily cycle in the background (dry run by default: computes orders, sends nothing).
+         */
+        post: operations["run_now_api_automation_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -563,6 +651,145 @@ export interface components {
             stopped_explanation: string;
             /** Pending Plan Id */
             pending_plan_id: number | null;
+        };
+        /** AutomationRun */
+        AutomationRun: {
+            /** Id */
+            id: number;
+            /** Started At */
+            started_at: string;
+            /** Finished At */
+            finished_at: string | null;
+            /** Trigger */
+            trigger: string;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string | null;
+            /** Steps */
+            steps: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** AutomationRunRequest */
+        AutomationRunRequest: {
+            /**
+             * Dry Run
+             * @default true
+             */
+            dry_run: boolean;
+        };
+        /** BrokerOrder */
+        BrokerOrder: {
+            /** Id */
+            id: number;
+            /** Client Order Id */
+            client_order_id: string;
+            /** Broker Order Id */
+            broker_order_id: string | null;
+            /** Origin */
+            origin: string;
+            /** Plan Id */
+            plan_id: number | null;
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Position Effect */
+            position_effect: string | null;
+            /** Qty */
+            qty: number;
+            /** Time In Force */
+            time_in_force: string;
+            /** Intended Session */
+            intended_session: string;
+            /** Ref Price */
+            ref_price: number | null;
+            /** Status */
+            status: string;
+            /** Status Reason */
+            status_reason: string | null;
+            /** Filled Qty */
+            filled_qty: number;
+            /** Filled Avg Price */
+            filled_avg_price: number | null;
+            /** Filled At */
+            filled_at: string | null;
+            /** Submitted At */
+            submitted_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** BrokerOrdersPage */
+        BrokerOrdersPage: {
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Rows */
+            rows: components["schemas"]["BrokerOrder"][];
+        };
+        /** BrokerOverview */
+        BrokerOverview: {
+            /** Connected */
+            connected: boolean;
+            /** Error */
+            error: string | null;
+            /** Account */
+            account: {
+                [key: string]: unknown;
+            } | null;
+            /** Synced At */
+            synced_at: string | null;
+            /** Positions */
+            positions: components["schemas"]["BrokerPosition"][];
+            /** Long Value */
+            long_value: number;
+            /** Short Value */
+            short_value: number;
+            /** Equity History */
+            equity_history: components["schemas"]["EquityPoint"][];
+            /** Trading Enabled Env */
+            trading_enabled_env: boolean;
+            /** Automation Enabled */
+            automation_enabled: boolean;
+            /** Last Runs */
+            last_runs: components["schemas"]["AutomationRun"][];
+            /** Schedule Note */
+            schedule_note: string;
+            /** Open Orders */
+            open_orders: number;
+        };
+        /** BrokerPosition */
+        BrokerPosition: {
+            /** Symbol */
+            symbol: string;
+            /** Qty */
+            qty: number;
+            /** Side */
+            side: string;
+            /** Avg Entry Price */
+            avg_entry_price: number | null;
+            /** Current Price */
+            current_price: number | null;
+            /** Market Value */
+            market_value: number | null;
+            /** Unrealized Pl */
+            unrealized_pl: number | null;
+            /** Weight */
+            weight: number | null;
+            /** Model Weight */
+            model_weight: number | null;
+            /** Drift */
+            drift: number | null;
+            /** Sector */
+            sector: string | null;
         };
         /** CashPage */
         CashPage: {
@@ -755,6 +982,17 @@ export interface components {
             warnings: components["schemas"]["QualityWarning"][];
             /** Generated At */
             generated_at: string;
+        };
+        /** EquityPoint */
+        EquityPoint: {
+            /** Session */
+            session: string;
+            /** Equity */
+            equity: number | null;
+            /** Model Nav */
+            model_nav: number | null;
+            /** Benchmark */
+            benchmark: number | null;
         };
         /** EventModel */
         EventModel: {
@@ -1337,6 +1575,11 @@ export interface components {
             /** Data Label */
             data_label: string;
             config: components["schemas"]["StrategyConfig"];
+            /**
+             * Config Warnings
+             * @default []
+             */
+            config_warnings: string[];
             /** Earliest Start */
             earliest_start: string;
             /** Latest End */
@@ -1611,36 +1854,28 @@ export interface components {
         };
         /**
          * StrategyConfig
-         * @description All tunable inputs of the 12-1 momentum strategy.
+         * @description All tunable inputs of the strategy.
          *
-         *     mode="long_only"  -> v1: top_n winners, equal weight, cash-funded, no shorts.
-         *     mode="long_short" -> v2: decile winners long / decile losers short with a
-         *         rank buffer, inverse-volatility weights with per-name caps, beta-neutral
-         *         books scaled to a volatility target within gross limits, a momentum-crash
-         *         guard, a $10 short price floor, borrow fees and a short stop-loss.
-         *     Every backtest run and every paper-portfolio configuration version stores the
-         *     full JSON of this model.
+         *     Long the strongest / short the weakest decile by the selected momentum signal, with a rank
+         *     buffer, inverse-volatility weights with per-name caps, beta- and sector-neutral books scaled
+         *     to a volatility target within gross limits, a momentum-crash guard, a short price floor, a
+         *     hard-to-borrow liquidity screen, borrow fees and a short stop-loss.
+         *     Every backtest run and every paper-portfolio configuration version stores the full JSON.
          */
         StrategyConfig: {
             /**
-             * Mode
-             * @description Strategy variant
-             * @default long_short
-             * @enum {string}
-             */
-            mode: "long_only" | "long_short";
-            /**
              * Initial Capital
-             * @description Starting virtual cash, USD
+             * @description Starting capital, USD
              * @default 100000
              */
             initial_capital: number;
             /**
-             * Top N
-             * @description Number of top-ranked eligible stocks to hold
-             * @default 50
+             * Signal
+             * @description Ranking signal: composite (residual + sector-demeaned momentum + FIP) or plain 12-1
+             * @default composite
+             * @enum {string}
              */
-            top_n: number;
+            signal: "composite" | "momentum_12_1";
             /**
              * Lookback Sessions
              * @description Older momentum anchor: sessions before signal
@@ -1701,6 +1936,36 @@ export interface components {
              * @default 0.9
              */
             min_session_coverage: number;
+            /**
+             * W Residual
+             * @description Composite weight: residual momentum
+             * @default 0.6
+             */
+            w_residual: number;
+            /**
+             * W Sector Demeaned
+             * @description Composite weight: sector-demeaned 12-1
+             * @default 0.25
+             */
+            w_sector_demeaned: number;
+            /**
+             * W Fip
+             * @description Composite weight: frog-in-the-pan (information discreteness)
+             * @default 0.15
+             */
+            w_fip: number;
+            /**
+             * Residual Window Months
+             * @description Rolling regression window for residual momentum
+             * @default 36
+             */
+            residual_window_months: number;
+            /**
+             * Winsor Sigma
+             * @description Winsorize each component at mean ± this many std devs
+             * @default 3
+             */
+            winsor_sigma: number;
             /**
              * Long Pct
              * @description Enter longs from the top fraction of eligible stocks
@@ -1782,9 +2047,21 @@ export interface components {
             /**
              * Max Short Weight
              * @description Per-name cap on shorts, fraction of NAV
-             * @default 0.01
+             * @default 0.015
              */
             max_short_weight: number;
+            /**
+             * Sector Neutral
+             * @description Constrain net exposure per sector
+             * @default true
+             */
+            sector_neutral: boolean;
+            /**
+             * Max Sector Net
+             * @description Max |long - short| weight per sector, fraction of NAV
+             * @default 0.02
+             */
+            max_sector_net: number;
             /**
              * Short Min Price
              * @description Raw close must exceed this to be shorted, USD
@@ -1792,8 +2069,20 @@ export interface components {
              */
             short_min_price: number;
             /**
+             * Htb Adv Window
+             * @description Dollar-volume window for the hard-to-borrow screen
+             * @default 60
+             */
+            htb_adv_window: number;
+            /**
+             * Htb Exclude Pct
+             * @description Exclude the least liquid fraction of eligible stocks from the short book
+             * @default 0.2
+             */
+            htb_exclude_pct: number;
+            /**
              * Borrow Fee Annual
-             * @description Assumed borrow cost on short market value, per year
+             * @description Assumed borrow cost, per year, charged per calendar day / 360
              * @default 0.005
              */
             borrow_fee_annual: number;
@@ -1839,7 +2128,7 @@ export interface components {
             end_date?: string | null;
             /**
              * Benchmark Symbol
-             * @description Benchmark; default = provider's SPY (or demo stand-in)
+             * @description Benchmark; default = the provider's SPY
              */
             benchmark_symbol?: string | null;
         };
@@ -1849,9 +2138,9 @@ export interface components {
             app_version: string;
             /**
              * Mode
-             * @enum {string}
+             * @constant
              */
-            mode: "demo" | "live";
+            mode: "live";
             /** Data Label */
             data_label: string;
             provider: components["schemas"]["ProviderInfoModel"] | null;
@@ -1872,6 +2161,11 @@ export interface components {
             server_time_utc: string;
             /** Bind Host */
             bind_host: string;
+        };
+        /** ToggleRequest */
+        ToggleRequest: {
+            /** Enabled */
+            enabled: boolean;
         };
         /** UniverseResponse */
         UniverseResponse: {
@@ -1919,7 +2213,7 @@ export interface components {
             /** Name */
             name: string | null;
             /** Sector */
-            sector: string | null;
+            sector?: string | null;
             /** Asset Type */
             asset_type: string;
             /** Close Raw */
@@ -1938,6 +2232,16 @@ export interface components {
             reason_text: string;
             /** Selected */
             selected: boolean;
+            /** Score */
+            score?: number | null;
+            /** Resid Mom */
+            resid_mom?: number | null;
+            /** Sector Mom */
+            sector_mom?: number | null;
+            /** Fip */
+            fip?: number | null;
+            /** Composite */
+            composite?: number | null;
             /**
              * Side
              * @description long | short | None in this live ranking
@@ -2334,28 +2638,6 @@ export interface operations {
             };
         };
     };
-    reseed_demo_api_paper_seed_demo_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     plans_api_rebalance_plans_get: {
         parameters: {
             query?: never;
@@ -2694,6 +2976,39 @@ export interface operations {
             };
         };
     };
+    run_alpha_api_research_runs__run_id__alpha_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     run_rebalances_api_research_runs__run_id__rebalances_get: {
         parameters: {
             query?: never;
@@ -2871,6 +3186,159 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Reproducibility"];
+                };
+            };
+        };
+    };
+    overview_api_broker_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrokerOverview"];
+                };
+            };
+        };
+    };
+    orders_api_broker_orders_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrokerOrdersPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    runs_api_automation_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationRun"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    toggle_api_automation_enabled_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToggleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_now_api_automation_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutomationRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

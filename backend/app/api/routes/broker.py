@@ -127,7 +127,7 @@ def overview(ctx: AppContext = Depends(get_ctx)):
                      "weight": w, "model_weight": mw, "drift": (w - mw) if w is not None and mw is not None else None,
                      "sector": sectors.get(p["symbol"])})
     # equity history (Alpaca) with model NAV and benchmark rebased to the first broker equity value
-    hist = ctx.db.query("SELECT session, equity FROM broker_equity ORDER BY session")
+    hist = ctx.db.query("SELECT session, equity FROM broker_equity WHERE equity > 0 ORDER BY session")
     model = {r["session"]: r["nav"] for r in ctx.db.query(
         "SELECT session, nav FROM paper_nav WHERE portfolio_id=? ORDER BY session", (port["id"],))} if port else {}
     bench = {r["session"]: r["benchmark_index"] for r in ctx.db.query(
@@ -152,7 +152,7 @@ def overview(ctx: AppContext = Depends(get_ctx)):
         "automation_enabled": get_setting(ctx.db, "automation_enabled", "true") == "true",
         "last_runs": runs,
         "schedule_note": ("Windows Task Scheduler runs `npm run daily` at 14:00 (orders: 08:00/09:00 ET, before the "
-                          "09:28 ET opening-auction cutoff) and 22:30 Europe/Zurich (after the US close: sync fills). "
+                          "09:28 ET opening-auction cutoff) and 23:30 Europe/Zurich (after the US close: sync fills). "
                           "Install with `npm run schedule:install`."),
         "open_orders": ctx.db.scalar("SELECT COUNT(*) FROM broker_orders WHERE status IN ('submitted','new','accepted',"
                                      "'pending_new','partially_filled','held')") or 0,
@@ -181,12 +181,12 @@ def toggle(req: ToggleRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
     return {"automation_enabled": req.enabled}
 
 
-class RunRequest(BaseModel):
+class AutomationRunRequest(BaseModel):
     dry_run: bool = True
 
 
 @router.post("/automation/run")
-def run_now(req: RunRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+def run_now(req: AutomationRunRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
     """Run the daily cycle in the background (dry run by default: computes orders, sends nothing)."""
     if not _run_lock.acquire(blocking=False):
         return {"started": False, "message": "A daily cycle is already running."}

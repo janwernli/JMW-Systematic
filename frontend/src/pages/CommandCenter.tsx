@@ -1,7 +1,7 @@
 import { Badge, Button, Group, Text } from "@mantine/core";
 import { Link } from "react-router";
 import { IconArrowsExchange } from "@tabler/icons-react";
-import { useQuality, useSummary, useStatus } from "../api/hooks";
+import { useBrokerOverview, useQuality, useSummary, useStatus } from "../api/hooks";
 import type { S } from "../api/client";
 import { DataTable } from "../components/DataTable";
 import { DrawdownChart, EquityChart } from "../components/charts";
@@ -24,13 +24,14 @@ export function CommandCenter() {
         <div>
           <h1 className="page-title">Command Center</h1>
           <div className="page-sub">
-            Internal virtual portfolio · valued at the close of {data.valuation_session ?? "—"} · Paper Simulation on{" "}
+            Alpaca paper account (top strip) · model portfolio below, valued at the close of {data.valuation_session ?? "—"} on{" "}
             {status?.data_label ?? "—"}
           </div>
         </div>
         {p && <AdvanceControls />}
       </div>
       <StaleBanner reason={data.data_is_stale ? data.data_stale_reason : null} />
+      <AlpacaStrip />
 
       {!p ? (
         <Panel title="Virtual portfolio"><InitPortfolio /></Panel>
@@ -51,7 +52,7 @@ export function CommandCenter() {
               tip="Benchmark total-return index from raw closes + dividends over the portfolio's life." />
             <Kpi label="Difference" value={fmtPct(data.return_difference, 2, true)} tone={data.return_difference}
               sub="simple difference, not alpha" tip="Portfolio return minus benchmark return over the same sessions. Not a risk-adjusted or statistically estimated alpha." />
-            {data.mode === "long_short" && (
+            {(
               <Kpi label="Gross / net" value={`${fmtPct((data.long_gross ?? 0) + (data.short_gross ?? 0), 0)} / ${fmtPct(data.net_exposure, 1, true)}`}
                 sub={`long ${fmtPct(data.long_gross, 0)} · short ${fmtPct(data.short_gross, 0)}`}
                 tip="Long and |short| market value as a share of NAV at the valuation close. Beta-neutral sizing, not dollar-neutral." />
@@ -164,6 +165,26 @@ function benchDrawdown(series: S["NavPoint"][]) {
     peak = Math.max(peak, s.benchmark_nav);
     return s.benchmark_nav / peak - 1;
   });
+}
+
+function AlpacaStrip() {
+  const { data } = useBrokerOverview();
+  if (!data) return null;
+  const a = data.account;
+  const eq = a?.equity as number | undefined;
+  const first = data.equity_history.find((p) => p.equity != null)?.equity;
+  const on = data.trading_enabled_env && data.automation_enabled;
+  return (
+    <div className="kpi-strip" style={{ borderColor: "#1f4a7a" }}>
+      <Kpi label="Alpaca paper equity" value={fmtUsd(eq, true)} sub={`synced ${data.synced_at ? data.synced_at.slice(0, 16).replace("T", " ") : "never"} UTC`}
+        tip="The traded portfolio: your Alpaca PAPER account (source of truth). Details on the Alpaca Paper page." />
+      <Kpi label="Since first sync" value={first && eq ? fmtPct(eq / first - 1, 2, true) : "—"} tone={first && eq ? eq / first - 1 : undefined} sub="Alpaca daily equity" />
+      <Kpi label="Positions" value={`${data.positions.filter((p) => p.qty > 0).length} L / ${data.positions.filter((p) => p.qty < 0).length} S`}
+        sub={eq ? `gross ${fmtPct((data.long_value - data.short_value) / eq, 0)}` : "—"} />
+      <Kpi label="Automation" value={on ? "ON" : "OFF"} sub={on ? "orders sent automatically" : data.trading_enabled_env ? "switched off in dashboard" : "BROKER_TRADING_ENABLED=false"} />
+      <Kpi label="Last cycle" value={data.last_runs[0]?.status ?? "—"} sub={data.last_runs[0] ? fmtTs(data.last_runs[0].started_at) : "no runs yet"} />
+    </div>
+  );
 }
 
 export function DataStatus() {

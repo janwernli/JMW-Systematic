@@ -24,7 +24,10 @@ type Diag = {
   long_names?: number; short_names?: number; long_gross?: number; short_gross?: number; net_exposure?: number;
   beta_long?: number; beta_short?: number; beta_ratio?: number; ex_ante_net_beta?: number; unit_vol?: number;
   vol_target?: number; ex_ante_vol?: number; binding?: string[]; notes?: string[]; cap_capacity?: number[];
-  max_long_weight?: number; max_short_weight?: number;
+  max_long_weight?: number; max_short_weight?: number; htb_excluded?: number; htb_adv_threshold?: number | null;
+  sector_neutrality?: { enabled: boolean; applied: boolean; status: string; max_abs_net: number | null; gross_reduced?: boolean;
+    sector_net?: Record<string, number> };
+  composite?: { coverage?: Record<string, number> };
   crash_guard?: { enabled: boolean; active: boolean; market_return: number | null; market_vol: number | null };
 };
 type Execution = {
@@ -77,11 +80,9 @@ function PlanView({ plan }: { plan: S["PlanDetail"] }) {
         <Kpi label="Plan" value={<span>#{plan.id} <Badge color={STATUS_COLOR[plan.status]} variant="light" size="sm">{plan.status}</Badge></span>} sub={`created ${fmtTs(plan.created_at)}`} />
         <Kpi label="Signal frozen at" value={plan.signal_session} sub="after the close (data ≤ this session)" />
         <Kpi label="Fill session" value={plan.fill_session} sub="simulated at the OPEN ± slippage" />
-        {est.mode === "long_short" ? (
+        {(
           <Kpi label="Long / short" value={`${est.long_count} / ${est.short_count}`}
             sub={`gross ${fmtPct(est.long_gross, 0)} / ${fmtPct(est.short_gross, 0)} · ${est.eligible_count} eligible`} />
-        ) : (
-          <Kpi label="Targets" value={`${plan.selected_count}`} sub={`of ${est.eligible_count} eligible / ${est.universe_count} universe`} />
         )}
         <Kpi label="Est. turnover" value={fmtPct(plan.est_turnover, 1)} sub={plan.realized_turnover != null ? `realized ${fmtPct(plan.realized_turnover, 1)}` : "one-way, of NAV"} />
         <Kpi label="Est. costs" value={fmtUsd(est.est_slippage + est.est_commission, true)} sub={`${plan.config.slippage_bps} bps slippage (assumed)`} />
@@ -99,7 +100,7 @@ function PlanView({ plan }: { plan: S["PlanDetail"] }) {
                   ? `Ready: apply before advancing into ${plan.fill_session}.`
                   : plan.apply_disabled_reason}
               </Text>
-              <Text size="10px" c="dimmed">Data version {plan.data_version} · top {plan.config.top_n} · min price ${plan.config.min_price} · min ADV {fmtMillions(plan.config.min_adv_usd)}</Text>
+              <Text size="10px" c="dimmed">Data version {plan.data_version} · signal {plan.config.signal} · min price ${plan.config.min_price} · min ADV {fmtMillions(plan.config.min_adv_usd)}</Text>
             </Stack>
             <Group gap={8}>
               <Button color="teal" leftSection={<IconLock size={14} />} disabled={!plan.can_apply} onClick={() => { setAck(false); setConfirm(true); }}>
@@ -139,7 +140,7 @@ function PlanView({ plan }: { plan: S["PlanDetail"] }) {
           )}
         </Panel>
 
-        {est.mode === "long_short" && est.diagnostics && <Sizing d={est.diagnostics} est={est} cfg={plan.config} />}
+        {est.diagnostics && <Sizing d={est.diagnostics} est={est} cfg={plan.config} />}
 
         <Panel className="span-5" title="Rule checks" source="Automated checks evaluated when the plan was frozen (plus a data-revision notice if data changed since).">
           {plan.checks.map((c, i) => (
@@ -245,6 +246,10 @@ function Sizing({ d, est, cfg }: { d: Diag; est: Estimate; cfg: StrategyConfig }
           tip="Short gross = long gross × β_long / β_short, so the book's ex-ante beta is zero (unless the crash guard scales the shorts down)." />
         <Kpi label="Ex-ante vol" value={fmtPct(d.ex_ante_vol, 1)} sub={`target ${fmtPct(d.vol_target, 0)} · unit ${fmtPct(d.unit_vol, 0)}`}
           tip="Annualized stdev of the proposed portfolio's trailing 126-session daily returns." />
+        <Kpi label="Sector neutral" value={d.sector_neutrality?.applied ? `±${fmtPct(d.sector_neutrality.max_abs_net, 1)}` : d.sector_neutrality?.enabled ? "not applied" : "off"}
+          sub={d.sector_neutrality?.status ?? ""} tip="Max |long − short| weight per sector after the sector-neutrality QP (limit from config)." />
+        <Kpi label="HTB screen" value={`${d.htb_excluded ?? 0} excl.`} sub={d.htb_adv_threshold ? `60d ADV < $${(d.htb_adv_threshold / 1e6).toFixed(1)}M` : "—"}
+          tip="Least liquid 20% of eligible stocks by 60-day dollar volume are never shorted (hard-to-borrow stand-in)." />
         <Kpi label="Crash guard" value={cg?.active ? "ON" : cg?.enabled ? "off" : "disabled"}
           sub={`mkt 24m ${cg?.market_return == null ? "n/a" : fmtPct(cg.market_return, 1, true)} · 6m vol ${cg?.market_vol == null ? "n/a" : fmtPct(cg.market_vol, 0)}`} />
       </div>
@@ -314,15 +319,13 @@ function PaperConfigButton() {
         {!cfg ? <Loading /> : (
           <Stack gap={8}>
             <Alert color="blue" variant="light"><Text size="xs">Changes create a new config version that applies to <b>future</b> rebalance plans only. Past signals, plans and fills are never rewritten.</Text></Alert>
-            <Text size="xs">Mode: <b>{cfg.mode === "long_short" ? "Long-short v2" : "Long-only v1"}</b> (to switch modes, archive and re-initialize the portfolio)</Text>
             <SimpleGrid cols={3} spacing={8}>
-              {cfg.mode === "long_only" && <NumberInput label="Top N" value={cfg.top_n} onChange={set("top_n")} min={1} max={1000} />}
               <NumberInput label="Min price (USD)" value={cfg.min_price} onChange={set("min_price")} min={0} decimalScale={2} />
               <NumberInput label="Min ADV (USD)" value={cfg.min_adv_usd} onChange={set("min_adv_usd")} min={0} step={1e6} thousandSeparator="," />
               <NumberInput label="Slippage (bps)" value={cfg.slippage_bps} onChange={set("slippage_bps")} min={0} max={500} />
               <NumberInput label="Commission / fill (USD)" value={cfg.commission_per_order} onChange={set("commission_per_order")} min={0} decimalScale={2} />
               <NumberInput label="Commission (bps)" value={cfg.commission_bps} onChange={set("commission_bps")} min={0} />
-              {cfg.mode === "long_short" && (
+              {(
                 <>
                   <NumberInput label="Vol target (fraction)" value={cfg.target_vol} onChange={set("target_vol")} min={0.01} max={1} step={0.01} decimalScale={3} />
                   <NumberInput label="Max gross / side" value={cfg.max_side_gross} onChange={set("max_side_gross")} min={0.05} max={2} step={0.05} decimalScale={2} />

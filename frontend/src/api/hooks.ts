@@ -129,7 +129,6 @@ export function usePaperMutations() {
     }),
     init: useMutation({ mutationFn: (body: S["PaperInitRequest"]) => api.post<S["PortfolioMeta"]>("/paper/init", body), ...opts }),
     reset: useMutation({ mutationFn: () => api.post<{ message: string }>("/paper/reset"), ...opts }),
-    reseed: useMutation({ mutationFn: () => api.post<{ message: string }>("/paper/seed-demo"), ...opts }),
     apply: useMutation({ mutationFn: (id: number) => api.post<S["PlanDetail"]>(`/rebalance/plans/${id}/apply`), ...opts }),
     skip: useMutation({
       mutationFn: (v: { id: number; note?: string }) => api.post<S["PlanDetail"]>(`/rebalance/plans/${v.id}/skip`, { note: v.note }),
@@ -157,4 +156,53 @@ export function useLaunchRun() {
     onError,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["runs"] }),
   });
+}
+
+// ------------------------------------------------------------------ Alpaca paper account + automation
+export const useBrokerOverview = () =>
+  useQuery({ queryKey: ["broker"], queryFn: () => api.get<S["BrokerOverview"]>("/broker/overview"), refetchInterval: 30_000 });
+
+export const useAutomationRuns = () =>
+  useQuery({
+    queryKey: ["automationRuns"],
+    queryFn: () => api.get<S["AutomationRun"][]>("/automation/runs?limit=30"),
+    refetchInterval: (q) => (q.state.data?.[0]?.status === "running" ? 1500 : 30_000),
+  });
+
+export const useBrokerOrders = (offset: number) =>
+  useQuery({ queryKey: ["brokerOrders", offset], queryFn: () => api.get<S["BrokerOrdersPage"]>(`/broker/orders?limit=100&offset=${offset}`) });
+
+export const useRunAlpha = (id: number | null, ready: boolean) =>
+  useQuery({
+    queryKey: ["runAlpha", id],
+    queryFn: () => api.get<AlphaResult>(`/research/runs/${id}/alpha`),
+    enabled: id != null && ready,
+    staleTime: Infinity,
+    retry: 0,
+  });
+
+export type AlphaFit = {
+  months: number; start: string; end: string; alpha_monthly: number; alpha_annual: number; t_alpha: number;
+  betas: Record<string, number>; t_betas: Record<string, number>; r2: number | null; nw_lags: number;
+};
+export type AlphaResult = { model: string; source: string; full: AlphaFit | null; first_half: AlphaFit | null;
+  second_half: AlphaFit | null; notes: string[] };
+
+export function useAutomationMutations() {
+  const qc = useQueryClient();
+  return {
+    toggle: useMutation({
+      mutationFn: (enabled: boolean) => api.put<{ automation_enabled: boolean }>("/automation/enabled", { enabled }),
+      onError,
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["broker"] }),
+    }),
+    run: useMutation({
+      mutationFn: (dry_run: boolean) => api.post<{ started: boolean; message: string }>("/automation/run", { dry_run }),
+      onError,
+      onSuccess: (r: { message: string }) => {
+        notifications.show({ color: "blue", title: "Daily cycle", message: r.message });
+        setTimeout(() => qc.invalidateQueries(), 1500);
+      },
+    }),
+  };
 }
