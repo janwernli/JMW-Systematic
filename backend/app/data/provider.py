@@ -86,12 +86,31 @@ class MarketDataProvider(ABC):
     def default_history_range(self) -> tuple[str, str]:
         """(start, end) ISO dates to request for a full refresh."""
 
+    def select_universe(self, asof: str, n: int, window: int = 60) -> list[str] | None:
+        """Optional: the top `n` common stocks by mean dollar volume over the `window` sessions ending at `asof`
+        (data <= asof only). Providers with a fixed or point-in-time universe return None (no re-selection)."""
+        return None
+
     def index_membership(self, symbols: list[str]) -> pd.DataFrame | None:
         """Optional point-in-time index membership: columns symbol, index_name, start, end (end None = current).
 
         Providers without historical membership return None; the universe is then everything imported
         (and flagged as survivorship-biased unless `info.point_in_time_universe`)."""
         return None
+
+
+def top_by_dollar_volume(bars: pd.DataFrame, asof: str, n: int, window: int = 60, min_frac: float = 0.8) -> list[str]:
+    """Symbols ranked by mean close x volume over their last `window` sessions on or before `asof`; a symbol needs
+    at least min_frac x window bars in that window. Ties broken by symbol."""
+    b = bars[bars["session"] <= asof]
+    if b.empty:
+        return []
+    sessions = sorted(b["session"].unique())[-window:]
+    b = b[b["session"].isin(sessions)]
+    dv = (b["close"].astype(float) * b["volume"].astype(float)).groupby(b["symbol"]).agg(["mean", "count"])
+    dv = dv[dv["count"] >= min_frac * len(sessions)]
+    ranked = sorted(dv.index, key=lambda s: (-dv.at[s, "mean"], s))
+    return ranked[:n]
 
 
 def empty_bars() -> pd.DataFrame:

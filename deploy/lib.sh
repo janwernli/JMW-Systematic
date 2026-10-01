@@ -17,7 +17,7 @@ require_normal_user() {
   if [ "$(id -u)" -eq 0 ]; then
     die "run this as your normal user (e.g. azureuser), not as root; it calls sudo itself where needed"
   fi
-  sudo -v || die "this script needs sudo rights"
+  sudo -n true 2>/dev/null || sudo -v || die "this script needs sudo rights"
 }
 
 # owner/repo from the git remote (https://github.com/o/r.git or git@github.com:o/r.git)

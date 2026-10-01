@@ -217,6 +217,30 @@ class DailyCycle:
         st.data = {"latest": latest, "expected": expected, "fresh": fresh}
         steps.append(st)
 
+        # 1b. universe: at a month-end the ledger has not processed yet, re-select the universe as of that close
+        #     (top N by 60-session dollar volume, held names kept), backfilling new symbols before any signal.
+        if fresh and latest:
+            st = Step("universe")
+            try:
+                port = ctx.ledger.active()
+                as_of = port["as_of_session"] if port else None
+                cfg_u = ctx.ledger.config_of(port) if port else StrategyConfig()
+                me = ctx.ledger.latest_month_end(latest, cfg_u) if port else (latest if self.cal.is_month_end(latest)
+                                                                             else None)
+                if me and (as_of is None or as_of < me):
+                    res = ctx.refresh_universe(me)
+                    if res is None:
+                        st.status, st.detail = "skipped", "provider keeps a fixed universe"
+                    else:
+                        st.detail = (f"as of {me}: {res['size']} symbols, +{len(res['added'])} / -{len(res['removed'])}"
+                                     + (f", {len(res['kept_held'])} held kept" if res["kept_held"] else "")
+                                     + (" (already done)" if res.get("already_done") else ""))
+                        st.data = {k: res[k] for k in ("added", "removed", "kept_held")}
+                    steps.append(st)
+            except Exception as e:  # noqa: BLE001 - a failed re-selection keeps the previous universe
+                st.status, st.detail = "error", f"universe refresh failed ({type(e).__name__}: {e}); previous universe kept"
+                steps.append(st)
+
         # 2. broker sync
         positions: dict[str, dict] = {}
         account: dict = {}

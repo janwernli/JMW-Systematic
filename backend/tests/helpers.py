@@ -68,7 +68,9 @@ class FixtureProvider(MarketDataProvider):
 
     def __init__(self, cal: TradingCalendar, series: dict[str, dict], actions: list[tuple] | None = None,
                  benchmark: str | None = None, sectors: dict[str, str] | None = None, etfs: set[str] | None = None,
-                 key: str = "fixture"):
+                 key: str = "fixture", universe: list[str] | None = None, reselect: bool = False):
+        self.universe = universe          # initial universe (None = every series); others are candidates only
+        self.reselect = reselect          # True: select_universe re-ranks all series by dollar volume
         self._bars = bars_frame(cal, series)
         self._acts = pd.DataFrame(actions or [], columns=ACTION_COLUMNS)
         etfs = set(etfs or ())
@@ -85,7 +87,20 @@ class FixtureProvider(MarketDataProvider):
             requires_key=False)
 
     def list_instruments(self, symbols=None):
-        return self._inst if symbols is None else [r for r in self._inst if r.symbol in set(symbols)]
+        if symbols is not None:
+            return [r for r in self._inst if r.symbol in set(symbols)]
+        if self.universe is None:
+            return self._inst
+        keep = set(self.universe)
+        return [r for r in self._inst if r.symbol in keep or r.asset_type != "common_stock"]
+
+    def select_universe(self, asof, n, window=60):
+        if not self.reselect:
+            return None
+        from app.data.provider import top_by_dollar_volume
+
+        common = [r.symbol for r in self._inst if r.asset_type == "common_stock"]
+        return top_by_dollar_volume(self._bars[self._bars["symbol"].isin(common)], asof, n, window)
 
     def fetch_bars(self, symbols, start, end):
         b = self._bars

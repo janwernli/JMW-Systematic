@@ -271,7 +271,11 @@ def _compute_data_version(db: Database, provider: str) -> str:
     inst = db.query_one(
         "SELECT COUNT(*) n, GROUP_CONCAT(symbol || asset_type || COALESCE(delist_date,''), ',') s FROM"
         " (SELECT * FROM instruments WHERE provider=? ORDER BY symbol)", (provider,))
-    payload = json.dumps([provider, row, act, inst], sort_keys=True, default=str)
+    mem = db.query_one(
+        "SELECT COUNT(*) n, MAX(m.start_session) s, MAX(COALESCE(m.end_session, '')) e,"
+        " SUM(CASE WHEN m.end_session IS NULL THEN 1 ELSE 0 END) open"
+        " FROM universe_membership m JOIN instruments i ON i.id=m.instrument_id WHERE i.provider=?", (provider,))
+    payload = json.dumps([provider, row, act, inst] + ([mem] if mem and mem["n"] else []), sort_keys=True, default=str)
     return f"{provider}-{row['hi'] or 'empty'}-{hashlib.sha256(payload.encode()).hexdigest()[:12]}"
 
 
@@ -282,6 +286,7 @@ _panel_lock = threading.Lock()
 def invalidate_panel_cache() -> None:
     with _panel_lock:
         _panel_cache.clear()
+    _version_cache.clear()   # membership changes do not create an import record
 
 
 def get_panel(db: Database, provider: str, calendar: TradingCalendar, benchmark: str | None) -> Panel:

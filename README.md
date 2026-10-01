@@ -103,7 +103,17 @@ npm run sectors              # re-classify all sectors from SEC EDGAR
 - downloads raw daily bars from 2016 plus splits and cash dividends
 - classifies sectors from **SEC EDGAR SIC codes**
 
-**After that, the universe is frozen.** Refreshes only re-fetch the last 10 sessions for the same symbols. Requests always end at the latest *completed* NYSE session, so a half-finished day is never stored.
+**Daily refreshes** re-fetch the last 10 sessions for the stored symbols. Requests always end at the latest *completed* NYSE session, so a half-finished day is never stored.
+
+**Monthly universe refresh (live).** At each month-end signal the daily cycle re-selects the universe (step `universe`, before the model ledger forms that month's plan):
+
+- **Selection:** the top `ALPACA_MAX_SYMBOLS` active, tradable Alpaca common stocks by **mean dollar volume over the 60 sessions up to that month-end**. Only data on or before the month-end is used.
+- **Held positions** (Alpaca account and model ledger) **stay in the universe until exited**, even when they fall out of the top N.
+- **New symbols** get their full history downloaded (and SEC sectors) **before** any signal is computed.
+- **Removed symbols** stop being eligible from that month-end on. Their history stays in the database.
+- **Membership is point-in-time** (`universe_membership`, index `alpaca_top_adv60`). On the first refresh, the current universe is seeded as members since the start of the stored history, so backtests over past data are unchanged; universe changes apply only going forward.
+- **Logging:** every selection is logged in `universe_selections` and the event log, with the added and removed symbols and the held names kept. It is idempotent per month-end.
+- A configured `ALPACA_UNIVERSE_FILE` keeps a fixed universe (no re-selection).
 
 **Classifying common stock.** Alpaca has no field for this, so a documented name/symbol heuristic excludes ETFs/ETNs, funds and trusts, notes, preferreds, ADRs, SPACs, warrants, units and rights.
 
@@ -134,6 +144,7 @@ Both bind to localhost only. Stop with **Ctrl+C**.
 The cycle is idempotent, so running it several times a day is safe.
 
 1. **Data.** Refreshes end-of-day bars and fills in missing SEC sectors. If the data doesn't reach the latest completed NYSE session, the cycle **sends no orders**.
+   At a month-end the ledger has not processed yet, it then **re-selects the universe** (top `ALPACA_MAX_SYMBOLS` by 60-session dollar volume, held names kept, new symbols backfilled), as described in section 4.
 2. **Sync.** Pulls the Alpaca account, positions, order statuses and daily equity history.
 3. **Model.** Advances the internal model ledger and automatically applies its month-end plan.
 4. **Stops.** Checks each **actual** short position. If its close is at least 1.5 × its average entry price, a cover order is placed for the next open.
@@ -237,13 +248,13 @@ A full-sample t-stat near 2, entirely from the second half, on a survivorship-bi
 
 The **Strategy Variants** page (`/variants`) runs seven **pre-defined** variants on the same data version and period and shows them side by side. They are fixed structural alternatives, defined in `backend/app/backtest/variants.py` before being run; nothing is tuned to the backtest.
 
-**Paper trading uses SPY + overlay** (switched on 2026-10-01; see [Switching the paper strategy](#switching-the-paper-strategy)). The other variants stay available for research. `StrategyConfig()` defaults are still Neutral 10%.
+**Paper trading uses Neutral 10%** (the default, `StrategyConfig()`). All other variants, including SPY + overlay, are research variants. To trade one of them, switch the paper strategy **on the VM**; see [Switching the paper strategy](#switching-the-paper-strategy). The Alpaca Paper page shows the active strategy at the top.
 
 | Variant | Definition |
 |---|---|
 | **Neutral 10%** | The current defaults. |
 | **Neutral 15%** | `target_vol` 0.15, `max_side_gross` 1.0, `max_total_gross` 2.0 (Alpaca Reg T limit). |
-| **SPY + overlay** (paper) | `core_beta` 1.0: 100% of NAV in SPY, rebalanced monthly with the rest. Plus an overlay from the same composite signal: deciles, buffer, inverse-vol weights, sector-neutral.<br>Overlay sizing is **fixed** (`sizing` fixed):<br>• long book 30% of NAV (`fixed_long_gross`);<br>• short book sized for overlay beta neutrality, long × β_L / β_S ≈ 30%, capped at 40% (`max_side_gross`).<br>`max_total_gross` 1.6: if core + long + short would exceed it, both overlay sides are scaled down together, which keeps the beta ratio. The crash guard scales the overlay short book. The stop-loss (+50%), the $10 short floor, the HTB screen and the easy-to-borrow check are unchanged. Beta and sector neutrality apply to the overlay only. |
+| **SPY + overlay** | `core_beta` 1.0: 100% of NAV in SPY, rebalanced monthly with the rest. Plus an overlay from the same composite signal: deciles, buffer, inverse-vol weights, sector-neutral.<br>Overlay sizing is **fixed** (`sizing` fixed):<br>• long book 30% of NAV (`fixed_long_gross`);<br>• short book sized for overlay beta neutrality, long × β_L / β_S ≈ 30%, capped at 40% (`max_side_gross`).<br>`max_total_gross` 1.6: if core + long + short would exceed it, both overlay sides are scaled down together, which keeps the beta ratio. The crash guard scales the overlay short book. The stop-loss (+50%), the $10 short floor, the HTB screen and the easy-to-borrow check are unchanged. Beta and sector neutrality apply to the overlay only. |
 | **130/30** | `sizing` = fixed: long book 130%, short book 30%, same signal, `beta_neutral` off, no vol target, gross cap 1.6. |
 | **Value + momentum (neutral)** | The Neutral 10% engine, but the ranking score = 50% composite momentum z + 50% value z (`signal` value_momentum, `w_value` 0.5).<br>Value z = mean of the **sector-neutral**, **winsorized (±3σ)** z-scores of **book-to-market** and **earnings yield**. Each ratio is winsorized across names, demeaned within its sector and z-scored.<br>Names without fundamentals rank on momentum alone; coverage is reported per signal. |
 | **Neutral 10% quarterly** | Neutral 10%, but signals only at quarter-ends (Mar/Jun/Sep/Dec; `rebalance_frequency` quarterly). Buffer exit at the 40th percentile (`buffer_exit_pct` 0.40). Stop-losses are still checked daily. |
@@ -322,7 +333,7 @@ SPY itself returned about 15% a year over the same period.
 
 - **Every variant's alpha comes from the second half.** None is significant in the first half.
 - **The two net-long variants mostly carry market beta.** Their extra return over the neutral books is mainly SPY's return.
-- **SPY + overlay (the paper strategy) has a full-sample alpha of essentially zero.** Its 30%/30% overlay is small next to the 100% SPY core, and its first-half alpha is significantly negative. It never breached a margin limit; it borrowed a little on margin ($1,729 interest over the run).
+- **SPY + overlay has a full-sample alpha of essentially zero.** Its 30%/30% overlay is small next to the 100% SPY core, and its first-half alpha is significantly negative. It never breached a margin limit; it borrowed a little on margin ($1,729 interest over the run).
 - **Comparison #1** used an earlier SPY + overlay definition: an 8% vol-target overlay, 200% gross cap, 57 days above 2×. It is kept in the comparison history.
 
 **The three research variants (comparison #3, same data and period, 2017-01-03 → 2026-09-29).** Same caveat, in bold: **Alpaca data is survivorship-biased (today's survivors, no delisted stocks). These numbers are illustrations, not evidence.** The dashboard shows this as a red banner above the table.
@@ -358,19 +369,15 @@ The model portfolio (internal ledger) and the Alpaca paper account always follow
 **From the command line (on the server):**
 
 ```bash
-# Azure VM (systemd install)
+# On the Azure VM: the only machine that trades the Alpaca paper account
 cd ~/JMW-Systematic/backend
 .venv/bin/python -m app paper-config --variant spy_overlay --replan-now --dry-run   # look first: changes nothing
 .venv/bin/python -m app paper-config --variant spy_overlay --replan-now             # switch
+.venv/bin/python -m app paper-config --variant neutral_10                          # back to the default
 systemctl list-timers 'jmw-daily*'                                                   # next run (08:00 / 17:30 ET)
-
-# Windows PC
-cd "C:\Coding\JMW Trading Strategy\backend"
-.venv\Scripts\python.exe -m app paper-config --variant spy_overlay --replan-now --dry-run
-.venv\Scripts\python.exe -m app paper-config --variant spy_overlay --replan-now
 ```
 
-Run it where the scheduler runs, i.e. against the database that trades: on the VM if the VM runs `jmw-daily.timer`.
+Run it **on the VM**, against the database that trades. The Windows PC is research-only (see below), so a switch there changes nothing at Alpaca.
 
 Variants: `neutral_10`, `neutral_15`, `spy_overlay`, `ext_130_30`.
 
@@ -556,7 +563,7 @@ npm test              # backend pytest suite + frontend type-check
 npm run test:backend
 ```
 
-There are 193 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
+There are 198 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
 
 - **Composite signal:** winsorizing, the FIP arithmetic, residual momentum rewarding recent idiosyncratic drift but not beta, sector demeaning, and ranking by composite vs 12–1.
 - **Books and sizing:** the hard-to-borrow screen, the sector-neutral QP (limits, gross, beta, caps, and the reduced-gross fallback), the capacity warning, and loading of legacy configs.
@@ -574,6 +581,12 @@ There are 193 backend tests, built on constructed datasets with hand-checkable r
   - The margin requirement rules and the engine's gross/maintenance flags.
   - The idle-cash RF basis, which matches r and r − RF at the extremes; the report's Sharpe, drawdown dates, costs and halves.
   - End to end: the four variants run through the API on an identical period.
+- **Monthly universe refresh:**
+  - Selection uses only data up to the month-end (a later volume spike is ignored).
+  - Held names are kept; dropped names stop being eligible from that month-end, and added names are backfilled first.
+  - History is unchanged for the original universe.
+  - The added and removed symbols are logged, and the refresh is idempotent.
+  - In the daily cycle it runs before the month-end plan; fixed-universe providers skip it.
 - **Research variants:**
   - **Point-in-time fundamentals:** a filing made after the signal date is never used; TTM = FY + YTD − prior YTD; split-adjusted shares; share classes summed; no B/M for negative equity; stale data dropped; the SEC fetch and storage (refetch replaces).
   - **Value + momentum score:** the 50/50 blend; momentum only without value data; ranking by the blend.
@@ -614,7 +627,7 @@ git add -A && git commit -m "Describe the change" && git push
 | `MARKET_DATA_PROVIDER` | `alpaca` | `alpaca` or `norgate` |
 | `ALPACA_API_KEY_ID` / `ALPACA_API_SECRET_KEY` | — | Paper keys (data + trading) |
 | `ALPACA_DATA_FEED` | `sip` | `sip` or `iex` |
-| `ALPACA_HISTORY_START` / `ALPACA_MAX_SYMBOLS` / `ALPACA_UNIVERSE_FILE` | `2016-01-01` / `600` / — | First-import universe |
+| `ALPACA_HISTORY_START` / `ALPACA_MAX_SYMBOLS` / `ALPACA_UNIVERSE_FILE` | `2016-01-01` / `600` / — | History start / universe size (first import and every month-end re-selection) / fixed universe file |
 | `ALPACA_PAPER_TRADING_URL` | `https://paper-api.alpaca.markets` | Any other host is refused |
 | `BROKER_TRADING_ENABLED` | `false` | Master switch for sending paper orders |
 | `SEC_USER_AGENT` | — | "Name contact@email" (SEC requirement) |
@@ -654,7 +667,12 @@ Strategy parameters that the variants use (StrategyConfig; defaults = Neutral 10
 
 ## 17. Running on an Azure VM
 
-The VM runs the automated paper trading and the dashboard around the clock. Your Windows PC stays the research machine: Norgate backtests, with the Windows scripts unchanged.
+The VM runs the automated paper trading and the dashboard around the clock. **The VM is the only machine that trades.** Your Windows PC stays the research machine: Norgate backtests, with the Windows scripts unchanged. On the PC:
+
+- `BROKER_TRADING_ENABLED=false` in its `.env`;
+- no scheduled tasks (`npm run schedule:remove`; check with `schtasks /Query | findstr JMW`).
+
+Both are set on this PC since 2026-10-01.
 
 | | Azure VM (Ubuntu 24.04, 1 GiB RAM + 2 GB swap) | Windows PC |
 |---|---|---|

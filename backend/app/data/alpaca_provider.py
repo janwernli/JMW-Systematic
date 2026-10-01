@@ -38,6 +38,7 @@ from .provider import (
     MarketDataProvider,
     ProviderError,
     ProviderInfo,
+    top_by_dollar_volume,
 )
 
 log = logging.getLogger(__name__)
@@ -206,6 +207,22 @@ class AlpacaProvider(MarketDataProvider):
             return symbols[:n]
         dv = (bars["close"] * bars["volume"]).groupby(bars["symbol"]).mean().sort_values(ascending=False)
         return list(dv.index[:n])
+
+    def select_universe(self, asof: str, n: int, window: int = 60) -> list[str] | None:
+        """Top `n` active, tradable common stocks by mean dollar volume over the `window` sessions ending at `asof`.
+
+        Uses only bars on or before `asof`. Asset status is Alpaca's current one (this runs live, at the month-end).
+        A configured ALPACA_UNIVERSE_FILE means a fixed universe: no re-selection (None)."""
+        if self.universe_file:
+            return None
+        assets = self._get(f"{self.trading_url}/v2/assets", {"asset_class": "us_equity"})
+        candidates = sorted(a["symbol"] for a in assets
+                            if a.get("exchange") in ("NYSE", "NASDAQ", "AMEX", "ARCA", "BATS")
+                            and a.get("status") == "active" and a.get("tradable")
+                            and classify_asset(a["symbol"], a.get("name", "")) == "common_stock")
+        start = (pd.Timestamp(asof) - pd.Timedelta(days=int(window * 1.6) + 10)).date().isoformat()
+        bars = self.fetch_bars(candidates, start, asof)
+        return top_by_dollar_volume(bars, asof, n, window)
 
     def fetch_bars(self, symbols: list[str], start: str, end: str) -> pd.DataFrame:
         rows: list[tuple] = []

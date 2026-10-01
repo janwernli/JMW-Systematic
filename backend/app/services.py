@@ -3,6 +3,7 @@ the background executor."""
 
 from __future__ import annotations
 
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -12,7 +13,7 @@ from .config import Settings
 from .data.panel import Panel
 from .data.provider import MarketDataProvider, ProviderError
 from .data.store import data_version, get_panel, run_import
-from .db import Database, log_event
+from .db import Database, log_event, utcnow
 from .ledger.paper import PaperLedger
 from .strategy.config import StrategyConfig
 
@@ -145,6 +146,93 @@ class AppContext:
         result = run_import(self.db, prov, self.calendar, start=start, symbols=existing or None)
         self.fill_sectors()
         return result
+
+    UNIVERSE_INDEX = "alpaca_top_adv60"
+
+    def held_symbols(self) -> set[str]:
+        """Symbols currently held: the Alpaca paper account (last sync) and the model ledger."""
+        held = set()
+        snap = self.db.scalar("SELECT MAX(as_of) FROM broker_positions")
+        if snap:
+            held |= {r["symbol"] for r in self.db.query("SELECT symbol FROM broker_positions WHERE as_of=? AND qty<>0",
+                                                        (snap,))}
+        port = self.ledger.active() if self.provider else None
+        if port:
+            held |= set(self.ledger.positions(port["id"]))
+        return held
+
+    def refresh_universe(self, asof: str, n: int | None = None) -> dict | None:
+        """Re-select the live universe as of month-end `asof` (see migration 0009). Idempotent per session.
+
+        top N common stocks by trailing 60-session dollar volume as of `asof` (provider.select_universe), plus held
+        names already in the universe (kept until exited). Added symbols get full history before any signal is
+        computed; removed symbols stay in the database (history kept) but are no longer members from `asof` on.
+        The first selection seeds the existing universe as members since the start of the stored history, so
+        backtests over past data are unchanged. Returns None if the provider does not re-select."""
+        from .data.store import invalidate_panel_cache, run_import
+
+        prov = self.require_provider()
+        key = prov.info.key
+        done = self.db.query_one("SELECT * FROM universe_selections WHERE provider=? AND session=?", (key, asof))
+        if done:
+            return {**done, "added": json.loads(done["added_json"]), "removed": json.loads(done["removed_json"]),
+                    "kept_held": json.loads(done["kept_held_json"]), "already_done": True}
+        n = n or self.settings.alpaca_max_symbols
+        top = prov.select_universe(asof, n)
+        if top is None:
+            return None
+        if not top:
+            raise RuntimeError(f"universe selection as of {asof} returned no symbols")
+        idx = self.UNIVERSE_INDEX
+        seeded = not self.db.scalar("SELECT 1 FROM universe_selections WHERE provider=? LIMIT 1", (key,))
+        if seeded:   # first selection: today's universe counts as members since the start of the stored history
+            first = self.db.scalar("SELECT MIN(b.session) FROM bars b JOIN instruments i ON i.id=b.instrument_id "
+                                   "WHERE i.provider=?", (key,))
+            with self.db.transaction() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO universe_membership (instrument_id, index_name, start_session, end_session) "
+                    "SELECT id, ?, ?, NULL FROM instruments WHERE provider=? AND asset_type='common_stock'",
+                    (idx, first, key))
+        current = {r["symbol"] for r in self.db.query(
+            "SELECT i.symbol FROM universe_membership m JOIN instruments i ON i.id=m.instrument_id "
+            "WHERE i.provider=? AND m.index_name=? AND m.end_session IS NULL", (key, idx))}
+        held = self.held_symbols()
+        kept = sorted((held & current) - set(top))
+        new_universe = set(top) | set(kept)
+        added, removed = sorted(new_universe - current), sorted(current - new_universe)
+        have_bars = {r["symbol"] for r in self.db.query(
+            "SELECT DISTINCT i.symbol FROM instruments i JOIN bars b ON b.instrument_id=i.id WHERE i.provider=?", (key,))}
+        backfill = [s for s in added if s not in have_bars]
+        if backfill:   # full history before any signal uses them
+            run_import(self.db, prov, self.calendar, end=asof, symbols=backfill)
+        prev = self.calendar.previous_session(asof)
+        with self.db.transaction() as conn:
+            ids = {r["symbol"]: r["id"] for r in conn.execute(
+                "SELECT id, symbol FROM instruments WHERE provider=?", (key,)).fetchall()}
+            for s in removed:
+                conn.execute("UPDATE universe_membership SET end_session=? WHERE instrument_id=? AND index_name=? "
+                             "AND end_session IS NULL", (prev, ids[s], idx))
+            missing = [s for s in added if s not in ids]
+            for s in added:
+                if s in ids:
+                    conn.execute("INSERT OR IGNORE INTO universe_membership (instrument_id, index_name, start_session, "
+                                 "end_session) VALUES (?,?,?,NULL)", (ids[s], idx, asof))
+            conn.execute("INSERT INTO universe_selections (provider, session, created_at, size, added_json, "
+                         "removed_json, kept_held_json, seeded) VALUES (?,?,?,?,?,?,?,?)",
+                         (key, asof, utcnow(), len(new_universe) - len(missing), json.dumps(added), json.dumps(removed),
+                          json.dumps(kept), int(seeded)))
+            log_event(conn, "warning" if added or removed else "info", "universe",
+                      f"Universe refresh as of {asof}: {len(new_universe) - len(missing)} symbols; added {len(added)}"
+                      + (f" {added}" if added else "") + f"; removed {len(removed)}" + (f" {removed}" if removed else "")
+                      + (f"; kept {len(kept)} held outside the top {n}: {kept}" if kept else "")
+                      + (f"; {len(missing)} added symbol(s) returned no data: {missing}" if missing else ""),
+                      session=asof, payload={"added": added, "removed": removed, "kept_held": kept, "seeded": seeded,
+                                             "backfilled": backfill, "no_data": missing})
+        invalidate_panel_cache()
+        if added:
+            self.fill_sectors()
+        return {"session": asof, "size": len(new_universe) - len(missing), "added": added, "removed": removed,
+                "kept_held": kept, "backfilled": backfill, "seeded": seeded, "already_done": False}
 
     def fill_sectors(self, only_missing: bool = True) -> dict | None:
         """SEC EDGAR SIC sectors - Alpaca only (Norgate supplies its own GICS sectors)."""
