@@ -180,3 +180,69 @@ def add_composite(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame
                      "fip": int(np.isfinite(fip).sum()), "eligible": len(el)},
         "unclassified_sector": int(sum(1 for s in secs if not s)),
     }
+
+
+def sector_neutral_z(x: np.ndarray, sectors: list[str | None], k: float) -> np.ndarray:
+    """Winsorize at mean +/- k sd, subtract the sector mean, then z-score across names (finite values only)."""
+    out = np.full(len(x), np.nan)
+    ok = np.isfinite(x)
+    if ok.sum() < 3:
+        return out
+    mu, sd = x[ok].mean(), x[ok].std(ddof=1)
+    c = np.where(ok, np.clip(x, mu - k * sd, mu + k * sd) if sd > 0 else x, np.nan)
+    key = pd.Series([s or "Unclassified" for s in sectors])
+    dem = c - pd.Series(c).groupby(key).transform("mean").to_numpy()
+    sd2 = np.nanstd(dem[ok], ddof=1)
+    out[ok] = dem[ok] / sd2 if sd2 > 0 else 0.0
+    return out
+
+
+def add_value_momentum(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame) -> dict:
+    """value_momentum score = (1 - w_value) x composite z + w_value x value z, for eligible rows.
+
+    value z = z-score of the mean of the sector-neutral, winsorized z-scores of book-to-market and earnings
+    yield, from point-in-time fundamentals (filed <= signal date). Names without value data keep the composite
+    z only (coverage reported)."""
+    for c in ("bm", "ep", "value_z", "vm_score"):
+        table[c] = np.nan
+    el = table.index[table["eligible"]]
+    if len(el) == 0:
+        return {}
+    mom_z = winsor_z(table.loc[el, "composite"].astype(float).to_numpy(), cfg.winsor_sigma)
+    fund = panel.fundamentals
+    asof = panel.sessions[t]
+    syms = list(table.loc[el, "symbol"])
+    bm = np.full(len(el), np.nan)
+    ep = np.full(len(el), np.nan)
+    if fund is not None and len(fund):
+        sessions = panel.sessions
+        for k, sym in enumerate(syms):
+            j = panel.sym_index[sym]
+            splits = panel.split_ratio[:, j]
+
+            def factor(end: str, j=j, splits=splits) -> float:
+                # splits on sessions after the share count's date, up to and including t
+                i0 = int(np.searchsorted(sessions, end, side="right"))
+                return float(np.prod(splits[i0:t + 1])) if i0 <= t else 1.0
+
+            r = fund.ratios(sym, asof, float(panel.close[t, j]), factor)
+            bm[k], ep[k] = r["bm"], r["ep"]
+    secs = list(table.loc[el, "sector"]) if "sector" in table.columns else [None] * len(el)
+    zb = sector_neutral_z(bm, secs, cfg.winsor_sigma)
+    ze = sector_neutral_z(ep, secs, cfg.winsor_sigma)
+    both = np.vstack([zb, ze])
+    n_ok = np.isfinite(both).sum(axis=0)
+    with np.errstate(invalid="ignore"):
+        raw_val = np.where(n_ok > 0, np.nansum(both, axis=0) / np.maximum(n_ok, 1), np.nan)
+    val_z = winsor_z(raw_val, cfg.winsor_sigma)
+    w = cfg.w_value
+    score = np.where(np.isfinite(val_z), (1 - w) * mom_z + w * val_z, mom_z)
+    table.loc[el, "bm"] = bm
+    table.loc[el, "ep"] = ep
+    table.loc[el, "value_z"] = val_z
+    table.loc[el, "vm_score"] = score
+    return {"w_value": w, "fundamentals_loaded": fund is not None and len(fund) > 0, "eligible": len(el),
+            "coverage": {"book_to_market": int(np.isfinite(bm).sum()), "earnings_yield": int(np.isfinite(ep).sum()),
+                         "value": int(np.isfinite(val_z).sum())},
+            "note": None if fund is not None and len(fund) else
+            "No point-in-time fundamentals loaded (run `python -m app fundamentals`): ranking uses momentum only."}

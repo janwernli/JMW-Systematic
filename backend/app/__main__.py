@@ -33,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     daily.add_argument("--trigger", default="cli")
     sub.add_parser("sectors", help="(re)classify sectors from SEC EDGAR SIC codes")
     sub.add_parser("migrate", help="apply pending database migrations and exit")
+    fu = sub.add_parser("fundamentals", help="download point-in-time fundamentals (SEC EDGAR XBRL companyfacts)")
+    fu.add_argument("--symbols", nargs="*", default=None, help="only these symbols (default: all common stocks)")
     pc = sub.add_parser("paper-config", help="switch the paper strategy (model ledger + Alpaca paper) to a variant")
     pc.add_argument("--variant", required=True, help="neutral_10 | neutral_15 | spy_overlay | ext_130_30")
     pc.add_argument("--replan-now", action="store_true",
@@ -75,6 +77,27 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"backup {res['backup']} ({res['bytes'] / 1e6:.1f} MB); keeping {len(res['kept'])}"
               + (f"; removed {', '.join(res['removed'])}" if res["removed"] else ""))
+        return 0
+    if args.cmd == "fundamentals":
+        from .data.fundamentals import fetch_sec_fundamentals
+        from .data.sectors import SecClient
+        from .logging_setup import configure_logging
+        from .services import AppContext
+
+        configure_logging("WARNING", "text")
+        ctx = AppContext(settings)
+        try:
+            client = SecClient(settings.sec_user_agent)
+        except ValueError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+
+        def progress(i, n, sym, status):
+            if i % 25 == 0 or i == n or status == "error":
+                print(f"  {i}/{n} {sym}: {status}", flush=True)
+
+        stats = fetch_sec_fundamentals(ctx.db, ctx.require_provider().info.key, client, args.symbols, progress)
+        print(f"fundamentals: {stats}")
         return 0
     if args.cmd == "paper-config":
         from .logging_setup import configure_logging

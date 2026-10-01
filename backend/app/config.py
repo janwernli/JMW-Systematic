@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     log_format: Literal["json", "text"] = Field(default="json", alias="LOG_FORMAT")
 
     # Market data
-    market_data_provider: Literal["alpaca", "norgate"] = Field(default="alpaca", alias="MARKET_DATA_PROVIDER")
+    market_data_provider: Literal["alpaca", "norgate", "crsp"] = Field(default="alpaca", alias="MARKET_DATA_PROVIDER")
+    crsp_csv_path: Path | None = Field(default=None, alias="CRSP_CSV_PATH")
+    crsp_history_start: str = Field(default="1990-01-01", alias="CRSP_HISTORY_START")
+    crsp_benchmark_permno: int = Field(default=84398, alias="CRSP_BENCHMARK_PERMNO")
     norgate_index: str = Field(default="Russell 1000", alias="NORGATE_INDEX")
     norgate_history_start: str = Field(default="2000-01-01", alias="NORGATE_HISTORY_START")
     alpaca_api_key_id: SecretStr | None = Field(default=None, alias="ALPACA_API_KEY_ID")
@@ -68,7 +71,7 @@ class Settings(BaseSettings):
     ntfy_server: str = Field(default="https://ntfy.sh", alias="NTFY_SERVER")
     ntfy_token: SecretStr | None = Field(default=None, alias="NTFY_TOKEN")
 
-    @field_validator("database_path", "alpaca_universe_file", mode="after")
+    @field_validator("database_path", "alpaca_universe_file", "crsp_csv_path", mode="after")
     @classmethod
     def _resolve_from_repo_root(cls, v: Path | None) -> Path | None:
         # Relative paths in .env are relative to the project folder, not the backend process's cwd.

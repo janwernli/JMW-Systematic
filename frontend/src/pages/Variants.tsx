@@ -13,8 +13,9 @@ import { MONTHS, fmtNum, fmtPct, fmtTs, fmtUsd } from "../lib/format";
 type Report = S["VariantReport"];
 type Period = S["PeriodStats"];
 
-// Four validated series colours for the variants; SPY is drawn as a dashed neutral line.
-const VARIANT_COLORS = [C.strategy, C.benchmark, C.gross, C.series4];
+// Categorical slots 1-7 in fixed order (validated on the dark chart surface: adjacent CVD dE >= 8.4, normal-vision
+// dE >= 19.3, contrast >= 3:1). SPY is drawn as a dashed neutral line; every series is also in the legend and table.
+const VARIANT_COLORS = [C.strategy, C.benchmark, C.gross, C.series4, "#d55181", "#008300", "#9085e9"];
 const SPY_STYLE = { lineStyle: { width: 1.5, color: C.text2, type: [5, 4] }, itemStyle: { color: C.text2 } };
 
 const ratio = (v?: number | null) => (v == null ? "—" : v.toFixed(2));
@@ -42,7 +43,7 @@ export function Variants() {
         <div>
           <h1 className="page-title">Strategy Variants</h1>
           <div className="page-sub">
-            Four pre-defined variants, each run once on the same data and period. Nothing here is tuned to the backtest.
+            {data.variants.length} pre-defined variants, each run once on the same data and period. Nothing here is tuned to the backtest.
             Paper trading currently uses <b>{paper.data?.name ?? "…"}</b>; switch with “Use for paper trading”.
           </div>
         </div>
@@ -54,7 +55,7 @@ export function Variants() {
           <Button leftSection={<IconPlayerPlay size={14} />} loading={launch.isPending}
             onClick={() => launch.mutate({ start_date: start || null, end_date: end || null },
               { onSuccess: (s) => setStudyId(s.id) })}>
-            Run all four
+            Run all variants
           </Button>
         </Group>
       </div>
@@ -123,6 +124,13 @@ function StudyView({ res }: { res: S["StudyResult"] }) {
           ))}
         </Panel>
       )}
+      {res.survivorship_biased && (
+        <Alert color="red" variant="filled" p="xs" title="Illustration only: survivorship-biased data">
+          <Text size="xs">These results use Alpaca data: today's surviving stocks, without delisted names. They overstate what was
+            achievable (long exposure most) and must not be read as evidence. Rerun the comparison on survivorship-free data
+            (Norgate, or CRSP via WRDS; see README) before drawing conclusions.</Text>
+        </Alert>
+      )}
       {res.notes.map((n, i) => <Alert key={i} color="yellow" variant="light" p="xs"><Text size="xs">{n}</Text></Alert>)}
       {done.length > 0 && (
         <>
@@ -156,6 +164,7 @@ function ComparisonTable({ results, colorOf }: { results: S["StudyVariantResult"
     { label: "CAGR", cell: (r) => <Signed v={r.cagr}>{fmtPct(r.cagr, 2, true)}</Signed> },
     { label: "Volatility (ann.)", cell: (r) => fmtPct(r.ann_vol, 1) },
     { label: "Sharpe", tip: "Mean excess return × 252 / (stdev × √252). Excess = r − RF on the capital not held as idle cash (see note below).", cell: (r) => ratio(r.sharpe) },
+    { label: "Investor Sharpe", tip: "r − RF on the FULL NAV: what an investor holding this account earns over T-bills (idle cash that earns nothing counts against it).", cell: (r) => ratio(r.investor_sharpe) },
     { label: "Sortino", tip: "Mean excess return × 252 / (downside deviation × √252), target 0.", cell: (r) => ratio(r.sortino) },
     { label: "Max drawdown", cell: (r) => <span className="down">{fmtPct(r.max_drawdown, 1)}</span> },
     { label: "  peak → trough", cell: (r) => <Text size="10px">{r.max_dd_peak} → {r.max_dd_trough}</Text> },
@@ -175,6 +184,7 @@ function ComparisonTable({ results, colorOf }: { results: S["StudyVariantResult"
       <Tooltip label={`slippage/commission ${fmtUsd(r.slippage_commission)} · borrow ${fmtUsd(r.borrow_fees)} · margin interest ${fmtUsd(r.margin_interest)}`}>
         <span>{fmtUsd(r.total_costs)}</span>
       </Tooltip>) },
+    { label: "Costs (% of NAV / yr)", tip: "Total costs / average NAV / years.", cell: (r) => fmtPct(r.cost_pct_nav_per_year, 2) },
     { label: "Margin loan (min cash)", tip: "Lowest cash / NAV. Negative = a margin loan, charged RF + an ASSUMED 2.5% spread.", cell: (r) => fmtPct(r.min_cash_weight, 1, true) },
     "Margin checks (flags only)",
     { label: "Days gross > 2.0×", cell: (r) => r.margin ? <span className={r.margin.gross_breach_days ? "warn" : ""}>{fmtNum(r.margin.gross_breach_days)}</span> : "—" },
@@ -186,10 +196,10 @@ function ComparisonTable({ results, colorOf }: { results: S["StudyVariantResult"
   ];
   const first = results[0].report!;
   return (
-    <Panel title="Side by side" label="Backtest" pad={false}
+    <Panel title="Side by side" label="Backtest · illustration" pad={false}
       source={`${first.start} → ${first.end}. ${first.rf_note} Halves: performance split at the middle session (${first.halves[0]?.end}); alpha halves split the factor months in half.`}>
       <div style={{ overflowX: "auto" }}>
-        <table className="dt dense" style={{ minWidth: 760 }}>
+        <table className="dt dense" style={{ minWidth: 140 + 150 * results.length }}>
           <thead>
             <tr><th />{results.map((r) => (
               <th key={r.key} style={{ textAlign: "right" }}>

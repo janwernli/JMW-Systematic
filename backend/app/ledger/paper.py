@@ -185,7 +185,7 @@ class PaperLedger:
             self._record_close(conn, panel, pid, t, cap, {}, 0.0)
             log_event(conn, "info", "paper", f"Virtual portfolio #{pid} initialized with ${cap:,.2f} at close of {inception}",
                       portfolio_id=pid, session=inception, payload={"config": cfg.model_dump(), "data_version": dv})
-            if self.cal.is_month_end(inception):
+            if self.cal.is_month_end(inception) and cfg.rebalances_in(inception):
                 self._form_plan(conn, panel, pid, t, cfg, cfg_id, {}, cap, dv)
         return self.active()
 
@@ -253,10 +253,12 @@ class PaperLedger:
             log_event(conn, "warning", "rebalance", f"Plan #{plan_id} skipped: {note or 'by user'}", portfolio_id=p["id"])
         return self.db.query_one("SELECT * FROM rebalance_plans WHERE id=?", (plan_id,))
 
-    def latest_month_end(self, upto: str) -> str | None:
-        """Last month-end session on or before `upto` that has stored data."""
+    def latest_month_end(self, upto: str, cfg: StrategyConfig | None = None) -> str | None:
+        """Last rebalance (month-end, or quarter-end for quarterly configs) session on or before `upto` with data."""
         panel = self.panel_fn()
-        ends = [x for x in self.cal.month_end_sessions(panel.sessions[0], upto) if x in panel.sess_index]
+        cfg = cfg or (self.config_of(self.active()) if self.active() else None)
+        ends = [x for x in self.cal.month_end_sessions(panel.sessions[0], upto) if x in panel.sess_index
+                and (cfg is None or cfg.rebalances_in(x))]
         return ends[-1] if ends else None
 
     def replan(self, note: str = "strategy switch") -> dict:
@@ -474,7 +476,7 @@ class PaperLedger:
                                      f"{trig['entry']:.2f} (stop +{cfg.short_stop_loss:.0%}).")
 
             # 6. month-end signal
-            if self.cal.is_month_end(s):
+            if self.cal.is_month_end(s) and cfg.rebalances_in(s):
                 self._form_plan(conn, panel, pid, t, cfg, port["config_id"], shares, cash, self.data_version_fn())
 
     def _stop_order(self, conn, pid: int, symbol: str, qty: int, trigger: str, fill_session: str, why: str) -> None:
@@ -549,7 +551,8 @@ class PaperLedger:
         symbols = set(shares) | set(targets)
         costs = CostModel(cfg.slippage_bps, cfg.commission_per_order, cfg.commission_bps)
         ex = execute_rebalance(shares, cash, targets, rank_order, open_prices(panel, t, symbols),
-                               preopen_marks(panel, t, symbols), costs, max_debit_frac=max_debit_fraction(targets))
+                               preopen_marks(panel, t, symbols), costs,
+                               max_debit_frac=max_debit_fraction(targets, cfg.allow_margin))
         now = utcnow()
         orders = {r["symbol"]: r for r in conn.execute("SELECT * FROM paper_orders WHERE plan_id=?", (plan["id"],))}
         for f in ex.fills:
@@ -615,7 +618,7 @@ class PaperLedger:
         symbols = set(shares) | set(targets)
         costs = CostModel(cfg.slippage_bps, cfg.commission_per_order, cfg.commission_bps)
         # Estimate with closes (signal session, or today's for a replan); real sizing happens at the fill-session open.
-        debit = max_debit_fraction(targets)
+        debit = max_debit_fraction(targets, cfg.allow_margin)
         est = execute_rebalance(shares, cash, targets, list(sig.selected["symbol"]), close_prices(panel, tp, symbols),
                                 marks_at(panel, tp, symbols), costs, max_debit_frac=debit)
         t = tp   # valuation / estimate session below

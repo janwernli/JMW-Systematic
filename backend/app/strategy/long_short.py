@@ -166,9 +166,11 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     short_cands = [s for s in reversed(usable) if s in shortable_set and s not in long_set]
     # distance from the bottom: the worst-ranked stock has distance 0
     shorts = book(short_cands, held_short, cfg.short_pct, cfg.buffer_exit_pct, lambda s: 1 - pct[s] - 1 / n)
+    if cfg.long_only:
+        shorts = []
     diag.update(long_names=len(longs), short_names=len(shorts), shortable=len(shortable),
-                blocked_shorts=sorted(blocked_shorts))
-    if not longs or not shorts:
+                blocked_shorts=sorted(blocked_shorts), long_only=cfg.long_only)
+    if not longs or (not shorts and not cfg.long_only):
         diag["notes"].append("One side is empty: rebalance blocked.")
         return diag
 
@@ -185,95 +187,113 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     overlay_cap = cfg.max_total_gross - cfg.core_beta   # the SPY core counts toward the total gross cap
     binding = []
 
-    def side_betas(wL: np.ndarray, wS: np.ndarray) -> tuple[float, float, float]:
-        bl = float(wL @ bL_i / wL.sum())
-        bs = float(wS @ bS_i / wS.sum())
-        return bl, bs, (bl / bs if cfg.beta_neutral and bs > 0 else 1.0)
-
-    def unit_vol(wL: np.ndarray, wS: np.ndarray, ratio: float) -> float:
-        unit = RL @ (wL / wL.sum()) - ratio * (RS @ (wS / wS.sum()))
-        return float(np.std(unit, ddof=1) * math.sqrt(252)) if len(unit) > 2 else float("nan")
-
-    if cfg.sizing == "fixed":
-        GL = min(cfg.fixed_long_gross, capL_tot)
-        if GL < cfg.fixed_long_gross - 1e-12:
-            binding.append("fixed long gross limited by per-name cap capacity")
-        if cfg.beta_neutral:
-            # Short book sized for overlay beta neutrality: GS = GL x beta_L / beta_S, capped at max_side_gross.
-            wL0 = waterfill(rawL, GL, cfg.max_long_weight)
-            wS0 = waterfill(rawS, min(GL, capS_tot), cfg.max_short_weight)
-            _, _, ratio0 = side_betas(wL0, wS0)
-            want = ratio0 * GL
-            GS = min(want, cfg.max_side_gross, capS_tot)
-            if GS < want - 1e-12:
-                binding.append(f"beta-neutral short book {want:.1%} capped at {GS:.1%} (overlay not fully beta-neutral)")
-        else:
-            GS = min(cfg.fixed_short_gross, capS_tot)
-            if GS < cfg.fixed_short_gross - 1e-12:
-                binding.append("fixed short gross limited by per-name cap capacity")
-        if GL + GS > overlay_cap + 1e-12:
-            scale = overlay_cap / (GL + GS)   # both sides scaled: keeps the beta ratio
-            GL, GS = GL * scale, GS * scale
-            binding.append(f"overlay scaled x{scale:.3f} to keep total gross within {cfg.max_total_gross:.0%}")
+    sector_of = dict(zip(table["symbol"], table["sector"])) if "sector" in table.columns else {}
+    if cfg.long_only:
+        # Long-only satellite: inverse-vol weights, per-name cap, no short book, no neutrality, no crash guard.
+        want = cfg.fixed_long_gross if cfg.sizing == "fixed" else cfg.max_side_gross
+        GL = min(want, capL_tot, overlay_cap)
+        if GL < want - 1e-12:
+            binding.append(f"long book {want:.1%} limited to {GL:.1%} (per-name cap capacity / total gross cap)")
         wL = waterfill(rawL, GL, cfg.max_long_weight)
-        wS = waterfill(rawS, GS, cfg.max_short_weight)
-        betaL, betaS, ratio = side_betas(wL, wS)
-        sig_unit = unit_vol(wL, wS, ratio)
-        g_star, lo, hi, feasible = None, GL, GL, True
+        wS = np.zeros(0)
+        betaL = float(wL @ bL_i / wL.sum()) if wL.sum() > 0 else float("nan")
+        betaS = ratio = float("nan")
+        unit = RL @ (wL / wL.sum()) if wL.sum() > 0 else np.zeros(len(RL))
+        sig_unit = float(np.std(unit, ddof=1) * math.sqrt(252)) if len(unit) > 2 else float("nan")
+        crash = {"enabled": False, "active": False, "market_return": None, "market_vol": None,
+                 "note": "long-only book: no short book to scale"}
+        sector_info = {"enabled": False, "applied": False, "max_abs_net": None,
+                       "status": "long-only book (no sector neutrality)"}
     else:
-        GL = GS = (cfg.min_side_gross + cfg.max_side_gross) / 2
-        for _ in range(4):
-            wL = waterfill(rawL, min(GL, capL_tot), cfg.max_long_weight)
-            wS = waterfill(rawS, min(GS, capS_tot), cfg.max_short_weight)
+        def side_betas(wL: np.ndarray, wS: np.ndarray) -> tuple[float, float, float]:
+            bl = float(wL @ bL_i / wL.sum())
+            bs = float(wS @ bS_i / wS.sum())
+            return bl, bs, (bl / bs if cfg.beta_neutral and bs > 0 else 1.0)
+
+        def unit_vol(wL: np.ndarray, wS: np.ndarray, ratio: float) -> float:
+            unit = RL @ (wL / wL.sum()) - ratio * (RS @ (wS / wS.sum()))
+            return float(np.std(unit, ddof=1) * math.sqrt(252)) if len(unit) > 2 else float("nan")
+
+        if cfg.sizing == "fixed":
+            GL = min(cfg.fixed_long_gross, capL_tot)
+            if GL < cfg.fixed_long_gross - 1e-12:
+                binding.append("fixed long gross limited by per-name cap capacity")
+            if cfg.beta_neutral:
+                # Short book sized for overlay beta neutrality: GS = GL x beta_L / beta_S, capped at max_side_gross.
+                wL0 = waterfill(rawL, GL, cfg.max_long_weight)
+                wS0 = waterfill(rawS, min(GL, capS_tot), cfg.max_short_weight)
+                _, _, ratio0 = side_betas(wL0, wS0)
+                want = ratio0 * GL
+                GS = min(want, cfg.max_side_gross, capS_tot)
+                if GS < want - 1e-12:
+                    binding.append(f"beta-neutral short book {want:.1%} capped at {GS:.1%} (overlay not fully beta-neutral)")
+            else:
+                GS = min(cfg.fixed_short_gross, capS_tot)
+                if GS < cfg.fixed_short_gross - 1e-12:
+                    binding.append("fixed short gross limited by per-name cap capacity")
+            if GL + GS > overlay_cap + 1e-12:
+                scale = overlay_cap / (GL + GS)   # both sides scaled: keeps the beta ratio
+                GL, GS = GL * scale, GS * scale
+                binding.append(f"overlay scaled x{scale:.3f} to keep total gross within {cfg.max_total_gross:.0%}")
+            wL = waterfill(rawL, GL, cfg.max_long_weight)
+            wS = waterfill(rawS, GS, cfg.max_short_weight)
             betaL, betaS, ratio = side_betas(wL, wS)
             sig_unit = unit_vol(wL, wS, ratio)
-            g_star = cfg.target_vol / sig_unit if sig_unit and sig_unit > 0 else cfg.min_side_gross
-            hi = min(cfg.max_side_gross, cfg.max_side_gross / ratio, overlay_cap / (1 + ratio),
-                     capL_tot, capS_tot / ratio)
-            lo = max(cfg.min_side_gross, cfg.min_side_gross / ratio)
-            feasible = lo <= hi
-            # Minimum gross is relaxed only when it conflicts with caps/neutrality; the vol target stays a ceiling.
-            GL = min(max(g_star, lo), hi) if feasible else min(g_star, hi)
-            GS = ratio * GL
+            g_star, lo, hi, feasible = None, GL, GL, True
+        else:
+            GL = GS = (cfg.min_side_gross + cfg.max_side_gross) / 2
+            for _ in range(4):
+                wL = waterfill(rawL, min(GL, capL_tot), cfg.max_long_weight)
+                wS = waterfill(rawS, min(GS, capS_tot), cfg.max_short_weight)
+                betaL, betaS, ratio = side_betas(wL, wS)
+                sig_unit = unit_vol(wL, wS, ratio)
+                g_star = cfg.target_vol / sig_unit if sig_unit and sig_unit > 0 else cfg.min_side_gross
+                hi = min(cfg.max_side_gross, cfg.max_side_gross / ratio, overlay_cap / (1 + ratio),
+                         capL_tot, capS_tot / ratio)
+                lo = max(cfg.min_side_gross, cfg.min_side_gross / ratio)
+                feasible = lo <= hi
+                # Minimum gross is relaxed only when it conflicts with caps/neutrality; the vol target stays a ceiling.
+                GL = min(max(g_star, lo), hi) if feasible else min(g_star, hi)
+                GS = ratio * GL
 
-        wL = waterfill(rawL, GL, cfg.max_long_weight)
-        wS = waterfill(rawS, GS, cfg.max_short_weight)
-        if not feasible:
-            binding.append("minimum side gross relaxed to keep beta neutrality within per-name caps / gross limits")
-            diag["notes"].append(binding[-1])
-        if abs(GL - hi) < 1e-9 and g_star > hi:
-            binding.append("vol target capped by gross / per-name capacity")
-        if feasible and abs(GL - lo) < 1e-9 and g_star < lo:
-            binding.append("vol target below minimum gross (minimum applied)")
+            wL = waterfill(rawL, GL, cfg.max_long_weight)
+            wS = waterfill(rawS, GS, cfg.max_short_weight)
+            if not feasible:
+                binding.append("minimum side gross relaxed to keep beta neutrality within per-name caps / gross limits")
+                diag["notes"].append(binding[-1])
+            if abs(GL - hi) < 1e-9 and g_star > hi:
+                binding.append("vol target capped by gross / per-name capacity")
+            if feasible and abs(GL - lo) < 1e-9 and g_star < lo:
+                binding.append("vol target below minimum gross (minimum applied)")
 
-    # ---- crash guard -------------------------------------------------------------------------------
-    crash = {"enabled": cfg.crash_guard, "active": False, "market_return": None, "market_vol": None}
-    if cfg.crash_guard and bench_col is not None:
-        t0 = t - cfg.crash_market_lookback_sessions
-        mret = None
-        if t0 >= 0 and not np.isnan(panel.tr[t0, bench_col]) and not np.isnan(panel.tr[t, bench_col]):
-            mret = float(panel.tr[t, bench_col] / panel.tr[t0, bench_col] - 1)
-        mvol = realized_vol(panel, t, cfg.vol_lookback_sessions)[bench_col]
-        mvol = None if np.isnan(mvol) else float(mvol)
-        crash.update(market_return=mret, market_vol=mvol)
-        if mret is not None and mvol is not None and mret < 0 and mvol > cfg.crash_market_vol_threshold:
-            crash["active"] = True
-            wS = wS * cfg.crash_short_scale
-            diag["notes"].append(f"Crash guard ON: market 24m return {mret:.1%} < 0 and 6m vol {mvol:.1%} > "
-                                 f"{cfg.crash_market_vol_threshold:.0%}; short book × {cfg.crash_short_scale:g}.")
-    elif cfg.crash_guard:
-        diag["notes"].append("Crash guard inactive: benchmark data unavailable.")
+        # ---- crash guard -------------------------------------------------------------------------------
+        crash = {"enabled": cfg.crash_guard, "active": False, "market_return": None, "market_vol": None}
+        if cfg.crash_guard and bench_col is not None:
+            t0 = t - cfg.crash_market_lookback_sessions
+            mret = None
+            if t0 >= 0 and not np.isnan(panel.tr[t0, bench_col]) and not np.isnan(panel.tr[t, bench_col]):
+                mret = float(panel.tr[t, bench_col] / panel.tr[t0, bench_col] - 1)
+            mvol = realized_vol(panel, t, cfg.vol_lookback_sessions)[bench_col]
+            mvol = None if np.isnan(mvol) else float(mvol)
+            crash.update(market_return=mret, market_vol=mvol)
+            if mret is not None and mvol is not None and mret < 0 and mvol > cfg.crash_market_vol_threshold:
+                crash["active"] = True
+                wS = wS * cfg.crash_short_scale
+                diag["notes"].append(f"Crash guard ON: market 24m return {mret:.1%} < 0 and 6m vol {mvol:.1%} > "
+                                     f"{cfg.crash_market_vol_threshold:.0%}; short book × {cfg.crash_short_scale:g}.")
+        elif cfg.crash_guard:
+            diag["notes"].append("Crash guard inactive: benchmark data unavailable.")
 
-    # ---- sector neutrality (after the crash guard, so it sees the final short book) -----------------
-    sector_of = dict(zip(table["symbol"], table["sector"])) if "sector" in table.columns else {}
-    sector_info = {"enabled": cfg.sector_neutral, "applied": False, "max_abs_net": None, "status": "disabled"}
-    if cfg.sector_neutral:
-        secL = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in longs]
-        secS = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in shorts]
-        wL, wS, sector_info = sector_neutralize(wL, wS, bL_i, bS_i, secL, secS, cfg.max_long_weight,
-                                                cfg.max_short_weight, cfg.max_sector_net)
-        if sector_info["status"] not in ("ok", "already_neutral"):
-            diag["notes"].append(f"Sector neutrality: {sector_info['status']}")
+        # ---- sector neutrality (after the crash guard, so it sees the final short book) -----------------
+        sector_of = dict(zip(table["symbol"], table["sector"])) if "sector" in table.columns else {}
+        sector_info = {"enabled": cfg.sector_neutral, "applied": False, "max_abs_net": None, "status": "disabled"}
+        if cfg.sector_neutral:
+            secL = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in longs]
+            secS = [sector_of.get(x) if isinstance(sector_of.get(x), str) else None for x in shorts]
+            wL, wS, sector_info = sector_neutralize(wL, wS, bL_i, bS_i, secL, secS, cfg.max_long_weight,
+                                                    cfg.max_short_weight, cfg.max_sector_net)
+            if sector_info["status"] not in ("ok", "already_neutral"):
+                diag["notes"].append(f"Sector neutrality: {sector_info['status']}")
 
     # Sector nets of the FINAL weights (after crash guard and neutralization), always reported.
     final_net: dict[str, float] = {}
@@ -290,17 +310,28 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
     weights = {s: float(w) for s, w in zip(longs, wL)} | {s: -float(w) for s, w in zip(shorts, wS)}
 
     # ---- SPY core (outside the neutral overlay) ------------------------------------------------------
-    core = {"symbol": None, "weight": 0.0, "requested": cfg.core_beta}
+    core = {"symbol": None, "weight": 0.0, "requested": cfg.core_beta, "trend": None}
     if cfg.core_beta > 0:
         csym = cfg.benchmark_symbol or panel.benchmark
         crow = table.index[table["symbol"] == csym]
         if bench_col is None or len(crow) == 0 or np.isnan(panel.close[t, bench_col]):
             diag["notes"].append(f"SPY core requested ({cfg.core_beta:.0%}) but benchmark '{csym}' has no bar: core omitted.")
         else:
-            table.loc[crow, "selected"] = True
-            table.loc[crow, "target_weight"] = cfg.core_beta
-            table.loc[crow, "side"] = "core"
-            core.update(symbol=csym, weight=cfg.core_beta)
+            weight = cfg.core_beta
+            if cfg.trend_filter:
+                trend = trend_signal(panel, t, bench_col, cfg.trend_sma_months)
+                core["trend"] = trend
+                if trend["on"] is False:
+                    weight = 0.0
+                    diag["notes"].append(f"Trend filter OFF: {csym} close {trend['close']:.2f} <= {cfg.trend_sma_months}-month "
+                                         f"SMA {trend['sma']:.2f}; the {cfg.core_beta:.0%} core is held in cash.")
+                elif trend["on"] is None:
+                    diag["notes"].append(f"Trend filter: {trend['note']}; core held.")
+            if weight > 0:
+                table.loc[crow, "selected"] = True
+                table.loc[crow, "target_weight"] = weight
+                table.loc[crow, "side"] = "core"
+            core.update(symbol=csym, weight=weight)
     port = RL @ wL - RS @ wS
     net_beta = float(wL @ bL_i - wS @ bS_i)
     sel_idx = table.index[table["symbol"].isin(weights)]
@@ -316,9 +347,25 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
         total_gross=float(wL.sum() + wS.sum() + core["weight"]),
         total_net_exposure=float(wL.sum() - wS.sum() + core["weight"]),
         cap_capacity=[capL_tot, capS_tot], binding=binding, crash_guard=crash, sector_neutrality=sector_info,
-        max_long_weight=float(wL.max()), max_short_weight=float(wS.max()),
+        max_long_weight=float(wL.max()) if wL.size else 0.0, max_short_weight=float(wS.max()) if wS.size else 0.0,
     )
     return diag
+
+
+def trend_signal(panel: Panel, t: int, col: int, months: int) -> dict:
+    """Month-end close vs. its `months`-month simple moving average of month-end closes (data <= t).
+
+    on: True (close > SMA), False (close <= SMA) or None (not enough month-ends yet)."""
+    sess = panel.sessions
+    ends = [i for i in range(t + 1) if i == t or sess[i + 1][:7] != sess[i][:7]]
+    ends = ends[-months:]
+    closes = panel.close[ends, col]
+    close = float(panel.close[t, col])
+    if len(ends) < months or np.isnan(closes).any():
+        return {"on": None, "close": close, "sma": None, "months": months,
+                "note": f"fewer than {months} month-end closes available"}
+    sma = float(np.mean(closes))
+    return {"on": bool(close > sma), "close": close, "sma": sma, "months": months, "note": None}
 
 
 def sector_neutralize(wL: np.ndarray, wS: np.ndarray, bL: np.ndarray, bS: np.ndarray, secL: list[str | None],

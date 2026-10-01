@@ -50,7 +50,7 @@ def test_defaults_unchanged_and_neutral_10_is_the_default():
     assert (cfg.core_beta, cfg.beta_neutral, cfg.sizing) == (0.0, True, "vol_target")
     assert VARIANTS[0].key == "neutral_10" and VARIANTS[0].overrides == {}
     assert VARIANTS[0].config() == StrategyConfig()
-    assert [v.name for v in VARIANTS] == ["Neutral 10%", "Neutral 15%", "SPY + overlay", "130/30"]
+    assert [v.name for v in VARIANTS][:4] == ["Neutral 10%", "Neutral 15%", "SPY + overlay", "130/30"] and len(VARIANTS) == 7
 
 
 def test_variant_definitions_match_the_spec():
@@ -78,7 +78,7 @@ def test_spy_core_is_exempt_from_neutrality_and_counts_toward_gross(fixture_pane
     tw = sig.target_weights()
     d = sig.diagnostics
     assert tw["SPY"] == 1.0 and sig.selected.iloc[0]["symbol"] == "SPY"     # the core is bought first
-    assert d["core"] == {"symbol": "SPY", "weight": 1.0, "requested": 1.0}
+    assert d["core"] == {"symbol": "SPY", "weight": 1.0, "requested": 1.0, "trend": None}
     assert d["overlay_gross_cap"] == pytest.approx(1.0)
     assert d["long_gross"] + d["short_gross"] <= 1.0 + 1e-9                    # overlay within 2.0 - core
     assert d["total_gross"] == pytest.approx(1.0 + d["long_gross"] + d["short_gross"])
@@ -239,7 +239,7 @@ def test_variant_study_api_runs_all_four_on_the_same_period(tmp_path, monkeypatc
         ov = c.get("/api/research/variants").json()
         assert [v["key"] for v in ov["variants"]] == [v.key for v in VARIANTS] and ov["paper_default"] == "No model portfolio"
         study = c.post("/api/research/variants/studies", json={}).json()
-        assert len(study["runs"]) == 4
+        assert len(study["runs"]) == len(VARIANTS)
         for _ in range(600):
             res = c.get(f"/api/research/variants/studies/{study['id']}").json()
             if res["study"]["complete"]:

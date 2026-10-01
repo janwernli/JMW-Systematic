@@ -7,6 +7,8 @@ Definitions (also shown in the UI):
                      ~0, SPY core / 130/30 ~1); a margin loan (cash < 0) is already charged RF + spread inside
                      r, so x = 1 there. Market-neutral and invested books are compared on the same basis.
   Sharpe             mean(excess) x 252 / (stdev(excess) x sqrt(252))
+  Investor Sharpe    the same with r - RF on the FULL NAV (what an investor holding this account earns over
+                     T-bills; idle cash that earns nothing counts against it)
   Sortino            mean(excess) x 252 / (sqrt(mean(min(excess, 0)^2)) x sqrt(252))
   max drawdown       with peak, trough and recovery (first close back at the peak NAV) dates
   worst month        lowest calendar-month return
@@ -14,6 +16,7 @@ Definitions (also shown in the UI):
   alpha              FF5 + momentum, Newey-West t-stat, on the same excess return (monthly)
   turnover           one-way, annualized: sum over rebalances of (buys + sells) / 2 / NAV, per year
   total costs        slippage + commissions + borrow fees + margin-loan interest, USD
+  costs % NAV / yr   total costs / average NAV / years
   halves             the run split at its middle session (performance) / middle month (alpha)
 """
 
@@ -47,6 +50,8 @@ def _perf(nav: pd.DataFrame, rf: RateSource, cash_interest: bool) -> dict:
     days = (pd.Timestamp(s.index[-1]) - pd.Timestamp(s.index[0])).days
     r = s.pct_change().dropna()
     ex = excess_returns(nav, rf, cash_interest)
+    inv = (r - pd.Series([rf.annual(x) / 252 for x in s.index], index=s.index)).dropna()
+    inv_sd = float(inv.std(ddof=1)) if len(inv) > 2 else 0.0
     vol = float(r.std(ddof=1) * math.sqrt(252)) if len(r) > 2 else None
     ex_sd = float(ex.std(ddof=1)) if len(ex) > 2 else 0.0
     down = float(np.sqrt(np.mean(np.minimum(ex.to_numpy(), 0.0) ** 2))) if len(ex) else 0.0
@@ -61,6 +66,7 @@ def _perf(nav: pd.DataFrame, rf: RateSource, cash_interest: bool) -> dict:
         "cagr": float((s.iloc[-1] / s.iloc[0]) ** (365.25 / days) - 1) if days >= 365 else None,
         "ann_vol": vol,
         "sharpe": float(ex.mean() * 252 / (ex_sd * math.sqrt(252))) if ex_sd > 0 else None,
+        "investor_sharpe": float(inv.mean() * 252 / (inv_sd * math.sqrt(252))) if inv_sd > 0 else None,
         "sortino": float(ex.mean() * 252 / (down * math.sqrt(252))) if down > 0 else None,
         "max_drawdown": float(dd.min()), "max_dd_peak": peak, "max_dd_trough": trough,
         "max_dd_recovery": rec.index[0] if len(rec) else None,
@@ -88,6 +94,8 @@ def run_report(nav: pd.DataFrame, metrics: dict, cash_interest: bool, factors: p
                                      "beta_mkt": fit["betas"].get("Mkt-RF"), "beta_mom": fit["betas"].get("Mom")}
 
     costs = sum(metrics.get(k) or 0.0 for k in ("total_costs", "borrow_fees", "margin_interest"))
+    years = (pd.Timestamp(nav.index[-1]) - pd.Timestamp(nav.index[0])).days / 365.25
+    cost_pct = costs / float(nav["nav"].mean()) / years if years > 0 else None
     return {
         **full,
         "worst_month": None if worst is None else {"year": worst["year"], "month": worst["month"],
@@ -96,7 +104,7 @@ def run_report(nav: pd.DataFrame, metrics: dict, cash_interest: bool, factors: p
         "alpha": a(alpha["full"]) if alpha else None,
         "alpha_model": alpha["model"] if alpha else None,
         "avg_turnover": metrics.get("avg_turnover"), "annualized_turnover": metrics.get("annualized_turnover"),
-        "total_costs": costs, "slippage_commission": metrics.get("total_costs"), "borrow_fees": metrics.get("borrow_fees"),
+        "total_costs": costs, "cost_pct_nav_per_year": cost_pct, "slippage_commission": metrics.get("total_costs"), "borrow_fees": metrics.get("borrow_fees"),
         "margin_interest": metrics.get("margin_interest"), "min_cash_weight": metrics.get("min_cash_weight"),
         "cost_drag": metrics.get("cost_drag"),
         "avg_long_gross": metrics.get("avg_long_gross"), "avg_short_gross": metrics.get("avg_short_gross"),

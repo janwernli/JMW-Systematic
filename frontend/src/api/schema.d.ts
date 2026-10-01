@@ -1515,6 +1515,8 @@ export interface components {
             ann_vol: number | null;
             /** Sharpe */
             sharpe: number | null;
+            /** Investor Sharpe */
+            investor_sharpe?: number | null;
             /** Sortino */
             sortino: number | null;
             /** Max Drawdown */
@@ -2220,11 +2222,24 @@ export interface components {
             initial_capital: number;
             /**
              * Signal
-             * @description Ranking signal: composite (residual + sector-demeaned momentum + FIP) or plain 12-1
+             * @description Ranking signal: composite (residual + sector-demeaned momentum + FIP), plain 12-1, or value_momentum (composite z blended with a point-in-time value z, weight w_value)
              * @default composite
              * @enum {string}
              */
-            signal: "composite" | "momentum_12_1";
+            signal: "composite" | "momentum_12_1" | "value_momentum";
+            /**
+             * W Value
+             * @description value_momentum: weight of the value z-score (rest: composite z)
+             * @default 0.5
+             */
+            w_value: number;
+            /**
+             * Rebalance Frequency
+             * @description Form signals at every month-end, or only at quarter-ends (Mar/Jun/Sep/Dec)
+             * @default monthly
+             * @enum {string}
+             */
+            rebalance_frequency: "monthly" | "quarterly";
             /**
              * Lookback Sessions
              * @description Older momentum anchor: sessions before signal
@@ -2425,6 +2440,30 @@ export interface components {
              */
             fixed_short_gross: number;
             /**
+             * Long Only
+             * @description No short book (long-only satellite); beta/sector neutrality off
+             * @default false
+             */
+            long_only: boolean;
+            /**
+             * Trend Filter
+             * @description Hold the SPY core only while SPY's month-end close > its trend_sma_months simple moving average of month-end closes; otherwise that share of NAV stays in cash
+             * @default false
+             */
+            trend_filter: boolean;
+            /**
+             * Trend Sma Months
+             * @description Trend filter SMA length (month-end closes)
+             * @default 10
+             */
+            trend_sma_months: number;
+            /**
+             * Allow Margin
+             * @description Allow a margin loan when longs exceed NAV + short proceeds
+             * @default true
+             */
+            allow_margin: boolean;
+            /**
              * Core Beta
              * @description SPY core: hold core_beta x NAV in the benchmark ETF under the long/short overlay. Rebalanced monthly; exempt from beta/sector neutrality; counts toward max_total_gross
              * @default 0
@@ -2540,6 +2579,11 @@ export interface components {
             series: components["schemas"]["StudySeriesPoint"][];
             /** Notes */
             notes: string[];
+            /**
+             * Survivorship Biased
+             * @default true
+             */
+            survivorship_biased: boolean;
         };
         /** StudyRun */
         StudyRun: {
@@ -2854,6 +2898,8 @@ export interface components {
             ann_vol: number | null;
             /** Sharpe */
             sharpe: number | null;
+            /** Investor Sharpe */
+            investor_sharpe?: number | null;
             /** Sortino */
             sortino: number | null;
             /** Max Drawdown */
@@ -2878,6 +2924,8 @@ export interface components {
             annualized_turnover: number | null;
             /** Total Costs */
             total_costs: number;
+            /** Cost Pct Nav Per Year */
+            cost_pct_nav_per_year?: number | null;
             /** Slippage Commission */
             slippage_commission: number | null;
             /** Borrow Fees */

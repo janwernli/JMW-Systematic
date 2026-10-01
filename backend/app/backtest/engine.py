@@ -213,7 +213,7 @@ def run_backtest(
             ex = execute_rebalance(
                 shares, cash, targets, list(pending.signals.selected["symbol"]),
                 open_prices(panel, t, symbols), preopen_marks(panel, t, symbols), costs,
-                max_debit_frac=max_debit_fraction(targets),
+                max_debit_frac=max_debit_fraction(targets, cfg.allow_margin),
             )
             record_fills(shares, ex.fills)
             shares, cash = ex.shares_after, ex.cash_after
@@ -292,7 +292,7 @@ def run_backtest(
                 stopped_since_signal.add(trig["symbol"])
 
         # 6. after close: month-end signal
-        if calendar.is_month_end(s):
+        if calendar.is_month_end(s) and cfg.rebalances_in(s):
             held_long = {x for x, q in shares.items() if q > 0}
             held_short = {x for x, q in shares.items() if q < 0 and x not in stopped_since_signal}
             sig = compute_signals(panel, t, cfg, held_long, held_short, set(stopped_since_signal))

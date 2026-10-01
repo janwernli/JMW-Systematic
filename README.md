@@ -235,7 +235,7 @@ A full-sample t-stat near 2, entirely from the second half, on a survivorship-bi
 
 ### Strategy variants
 
-The **Strategy Variants** page (`/variants`) runs four **pre-defined** variants on the same data version and period and shows them side by side. They are fixed structural alternatives, defined in `backend/app/backtest/variants.py` before being run; nothing is tuned to the backtest.
+The **Strategy Variants** page (`/variants`) runs seven **pre-defined** variants on the same data version and period and shows them side by side. They are fixed structural alternatives, defined in `backend/app/backtest/variants.py` before being run; nothing is tuned to the backtest.
 
 **Paper trading uses SPY + overlay** (switched on 2026-10-01; see [Switching the paper strategy](#switching-the-paper-strategy)). The other variants stay available for research. `StrategyConfig()` defaults are still Neutral 10%.
 
@@ -245,6 +245,30 @@ The **Strategy Variants** page (`/variants`) runs four **pre-defined** variants 
 | **Neutral 15%** | `target_vol` 0.15, `max_side_gross` 1.0, `max_total_gross` 2.0 (Alpaca Reg T limit). |
 | **SPY + overlay** (paper) | `core_beta` 1.0: 100% of NAV in SPY, rebalanced monthly with the rest. Plus an overlay from the same composite signal: deciles, buffer, inverse-vol weights, sector-neutral.<br>Overlay sizing is **fixed** (`sizing` fixed):<br>• long book 30% of NAV (`fixed_long_gross`);<br>• short book sized for overlay beta neutrality, long × β_L / β_S ≈ 30%, capped at 40% (`max_side_gross`).<br>`max_total_gross` 1.6: if core + long + short would exceed it, both overlay sides are scaled down together, which keeps the beta ratio. The crash guard scales the overlay short book. The stop-loss (+50%), the $10 short floor, the HTB screen and the easy-to-borrow check are unchanged. Beta and sector neutrality apply to the overlay only. |
 | **130/30** | `sizing` = fixed: long book 130%, short book 30%, same signal, `beta_neutral` off, no vol target, gross cap 1.6. |
+| **Value + momentum (neutral)** | The Neutral 10% engine, but the ranking score = 50% composite momentum z + 50% value z (`signal` value_momentum, `w_value` 0.5).<br>Value z = mean of the **sector-neutral**, **winsorized (±3σ)** z-scores of **book-to-market** and **earnings yield**. Each ratio is winsorized across names, demeaned within its sector and z-scored.<br>Names without fundamentals rank on momentum alone; coverage is reported per signal. |
+| **Neutral 10% quarterly** | Neutral 10%, but signals only at quarter-ends (Mar/Jun/Sep/Dec; `rebalance_frequency` quarterly). Buffer exit at the 40th percentile (`buffer_exit_pct` 0.40). Stop-losses are still checked daily. |
+| **Trend + satellite** | 80% SPY held only while SPY's month-end close is above its 10-month SMA of month-end closes (`trend_filter`, `trend_sma_months` 10); otherwise that 80% stays in cash earning RF (`cash_interest`).<br>Plus a 20% long-only book: top-decile composite momentum, inverse-vol, cap 1% per name (`long_only`, `fixed_long_gross` 0.20, `max_long_weight` 0.01).<br>No shorts, no margin (`allow_margin` off). Monthly. |
+
+**Point-in-time fundamentals (value signal).** `python -m app fundamentals` downloads SEC EDGAR XBRL *companyfacts* for every common stock in the universe. It needs `SEC_USER_AGENT`, sends requests only to sec.gov at ~8 per second, and takes about 6 minutes for 600 stocks. It keeps three concepts **with their filing dates** (table `fundamental_facts`, migration 0008):
+
+| Concept | XBRL tag | Fallback |
+|---|---|---|
+| book equity | `StockholdersEquity` | incl. noncontrolling interest |
+| net income | `NetIncomeLoss` | `ProfitLoss` |
+| shares outstanding | `dei:EntityCommonStockSharesOutstanding` (share classes summed per filing) | `CommonStockSharesOutstanding` |
+
+At a signal date only facts with **filed ≤ signal date** are used:
+
+- **Market cap** = raw close × shares, with the shares adjusted for splits after their reporting date.
+- **Book-to-market** = latest book equity ÷ market cap (none if equity ≤ 0).
+- **Earnings yield** = TTM net income ÷ market cap. TTM = last fiscal year + current year-to-date − prior year-to-date, or the fiscal year alone.
+- Data older than 18 months is ignored.
+- On the current universe, 594 of 600 stocks have facts. Compustat via WRDS can replace this source later behind the same interface (`PointInTimeFundamentals`).
+
+**Two more columns** in the comparison:
+
+- **Investor Sharpe**: r − RF on the **full** NAV. This is what an account holder earns over T-bills; idle cash that earns nothing counts against it. The existing Sharpe charges RF only on capital not held as idle cash.
+- **Costs as % of NAV per year**: total costs ÷ average NAV ÷ years.
 
 The 130/30 variant needs two things that follow from its definition:
 
@@ -300,6 +324,27 @@ SPY itself returned about 15% a year over the same period.
 - **The two net-long variants mostly carry market beta.** Their extra return over the neutral books is mainly SPY's return.
 - **SPY + overlay (the paper strategy) has a full-sample alpha of essentially zero.** Its 30%/30% overlay is small next to the 100% SPY core, and its first-half alpha is significantly negative. It never breached a margin limit; it borrowed a little on margin ($1,729 interest over the run).
 - **Comparison #1** used an earlier SPY + overlay definition: an 8% vol-target overlay, 200% gross cap, 57 days above 2×. It is kept in the comparison history.
+
+**The three research variants (comparison #3, same data and period, 2017-01-03 → 2026-09-29).** Same caveat, in bold: **Alpaca data is survivorship-biased (today's survivors, no delisted stocks). These numbers are illustrations, not evidence.** The dashboard shows this as a red banner above the table.
+
+| | Neutral 10% (ref.) | Value + momentum | Neutral 10% quarterly | Trend + satellite |
+|---|---|---|---|---|
+| CAGR / vol | 4.1% / 8.3% | 1.8% / 6.5% | 3.0% / 7.8% | 10.1% / 12.2% |
+| Sharpe / Investor Sharpe / Sortino | 0.54 / 0.24 / 0.73 | 0.30 / −0.05 / 0.42 | 0.42 / 0.11 / 0.57 | 0.66 / 0.66 / 0.89 |
+| Max drawdown / worst month | −14.1% / −4.4% | −21.6% / −3.0% | −16.5% / −4.4% | −21.3% / −9.5% |
+| Beta / correlation to SPY | 0.00 / 0.01 | 0.02 / 0.06 | 0.04 / 0.09 | 0.54 / 0.79 |
+| Alpha (FF5 + Mom), t | +3.2%, 2.09 | +0.4%, 0.23 | +2.0%, 1.37 | +0.2%, 0.07 |
+| Turnover / costs (% NAV per year) | 3.4× / 0.99% | 3.0× / 0.89% | 1.8× / 0.66% | 1.3× / 0.24% |
+| Margin flags (days gross > 2× / maintenance) | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| 1st half: CAGR, alpha (t) | −1.8%, −2.0% (−1.3) | −4.4%, −5.6% (−4.1) | −1.4%, −1.9% (−1.1) | +12.6%, −0.8% (−0.2) |
+| 2nd half: CAGR, alpha (t) | +10.4%, +8.5% (4.7) | +8.4%, +5.7% (2.8) | +7.6%, +5.8% (3.7) | +7.7%, +1.3% (0.4) |
+
+Investor Sharpe for the other variants: Neutral 15% 0.30, SPY + overlay 0.79, 130/30 0.97.
+
+- **Value + momentum:** the value blend cut volatility but also removed the momentum alpha. The first half was significantly negative (−5.6%, t −4.1). Value coverage was 81–82% of eligible stocks.
+- **Quarterly:** turnover and costs roughly halved, but alpha fell from +3.2% to +2.0% (t 1.4).
+- **Trend + satellite:** half SPY's beta and ~0.2% costs a year, with no alpha. Its return is SPY timing plus a small momentum sleeve.
+- **Investor Sharpe** is far below the Sharpe for the market-neutral books, because their cash earns nothing. For the invested books the two are the same.
 
 ### Switching the paper strategy
 
@@ -435,6 +480,47 @@ Tell the scheduler which provider to trade on by keeping `MARKET_DATA_PROVIDER` 
 
 **Status:** implemented against Norgate's documented Python API and unit-tested with a simulated `norgatedata` module. **It has not been run against a real Norgate installation**, because none was available.
 
+### CRSP daily stock files (WRDS): survivorship-free reruns
+
+`backend/app/data/crsp_provider.py` is a **stub** provider (`MARKET_DATA_PROVIDER=crsp`) that reads a CRSP daily stock file exported from WRDS as CSV. With it, the strategy-variant comparison can be rerun on survivorship-free data: delisted stocks are included, with historical share codes, exchanges and SIC codes.
+
+**1. Export from WRDS** (CRSP → Stock / Security Files → Daily Stock File, or SQL on `crsp.dsf` joined with `crsp.dsenames`):
+
+- **Required columns:** `PERMNO, date, PRC, VOL, RET, DLRET, SHRCD, EXCHCD, SICCD, SHROUT`.
+- **Also needed:**
+  - **`OPENPRC`**, because orders fill at the open. Without it the provider refuses to load bars.
+  - **`CFACPR`**, the cumulative price-adjustment factor, so splits can be separated from cash distributions.
+- **Optional:** `TICKER, COMNAM`, for display only.
+- **Universe filter:** `SHRCD` in (10, 11) for common stocks, `EXCHCD` in (1, 2, 3) for NYSE/AMEX/NASDAQ. Also include SPY (PERMNO 84398, SHRCD 73) as the benchmark.
+- **Dates:** your research period plus at least 3 years of warm-up (the composite signal needs 36 months of history).
+- **Format:** one CSV, one row per PERMNO and trading day (`date` as YYYY-MM-DD or YYYYMMDD).
+
+**2. Configure** `.env` on the research PC (the CSV is licensed data: keep it out of git, e.g. in `data/`):
+
+```
+MARKET_DATA_PROVIDER=crsp
+CRSP_CSV_PATH=./data/crsp_dsf.csv
+CRSP_HISTORY_START=1995-01-01
+CRSP_BENCHMARK_PERMNO=84398
+DATABASE_PATH=./data/crsp.db         # keep CRSP research separate from the trading database
+```
+
+**3. Import and rerun** with `npm run import-data`, then *Strategy Variants → Run all variants*.
+
+What the stub implements:
+
+- Symbols are `P<PERMNO>`, which is stable across ticker changes.
+- A negative `PRC` (a bid/ask midpoint) is used as an absolute value.
+- Instruments are classified by `SHRCD`, `EXCHCD` and `SICCD`, using the same 11-sector map as the SEC SIC codes.
+- The delisting date is the last row before the file's end, and `DLRET` is stored with the instrument.
+- Splits come from changes in `CFACPR`. Cash distributions are implied by `RET × P(t−1) − (P(t) − P(t−1))`.
+
+Still to do before trusting a CRSP run:
+
+1. **Apply delisting returns:** the cash-out at delisting should use the last price × (1 + `DLRET`), not the last close.
+2. **Value variant:** use point-in-time fundamentals from Compustat (`comp.fundq` with `rdq` / filing dates) instead of SEC companyfacts, which only cover current tickers.
+3. **Index membership:** add `crsp.msp500list` if you want an S&P 500 universe instead of all common stocks.
+
 ## 12. Architecture and data flow
 
 ```
@@ -470,7 +556,7 @@ npm test              # backend pytest suite + frontend type-check
 npm run test:backend
 ```
 
-There are 180 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
+There are 193 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
 
 - **Composite signal:** winsorizing, the FIP arithmetic, residual momentum rewarding recent idiosyncratic drift but not beta, sector demeaning, and ranking by composite vs 12–1.
 - **Books and sizing:** the hard-to-borrow screen, the sector-neutral QP (limits, gross, beta, caps, and the reduced-gross fallback), the capacity warning, and loading of legacy configs.
@@ -488,6 +574,13 @@ There are 180 backend tests, built on constructed datasets with hand-checkable r
   - The margin requirement rules and the engine's gross/maintenance flags.
   - The idle-cash RF basis, which matches r and r − RF at the extremes; the report's Sharpe, drawdown dates, costs and halves.
   - End to end: the four variants run through the API on an identical period.
+- **Research variants:**
+  - **Point-in-time fundamentals:** a filing made after the signal date is never used; TTM = FY + YTD − prior YTD; split-adjusted shares; share classes summed; no B/M for negative equity; stale data dropped; the SEC fetch and storage (refetch replaces).
+  - **Value + momentum score:** the 50/50 blend; momentum only without value data; ranking by the blend.
+  - **Quarterly rebalancing** at quarter-ends only.
+  - **Trend + satellite:** the trend filter on and off; the long-only 20% book within the 1% cap; no shorts and no margin loan; idle cash earns RF.
+  - **Report:** Investor Sharpe and costs % of NAV per year.
+  - **CRSP CSV stub:** share codes, negative PRC, delisting date and DLRET, splits from CFACPR, implied dividends, and clear errors for missing columns.
 - **Paper strategy switch:**
   - A new config version, the event log, the ntfy message and idempotency.
   - The dry run changes nothing: every table is compared before and after the CLI dry run.
@@ -528,6 +621,7 @@ git add -A && git commit -m "Describe the change" && git push
 | `NORGATE_INDEX` / `NORGATE_HISTORY_START` | `Russell 1000` / `2000-01-01` | Norgate provider |
 | `NTFY_TOPIC` | — (off) | ntfy topic for run summaries and alerts. Use a long random name. |
 | `NTFY_SERVER` / `NTFY_TOKEN` | `https://ntfy.sh` / — | Own ntfy server or access token (optional) |
+| `CRSP_CSV_PATH` / `CRSP_HISTORY_START` / `CRSP_BENCHMARK_PERMNO` | — / `1990-01-01` / `84398` | CRSP stub provider (`MARKET_DATA_PROVIDER=crsp`) |
 
 Strategy parameters that the variants use (StrategyConfig; defaults = Neutral 10%):
 
@@ -536,6 +630,10 @@ Strategy parameters that the variants use (StrategyConfig; defaults = Neutral 10
 | `core_beta` | 0.0 | SPY core, fraction of NAV (0–1); exempt from beta and sector neutrality; counts toward `max_total_gross` |
 | `beta_neutral` | true | Short gross = long gross × β_L / β_S; off = equal dollar gross per side |
 | `sizing` | `vol_target` | `vol_target` or `fixed` (`fixed_long_gross` / `fixed_short_gross`, default 1.30 / 0.30) |
+| `signal` / `w_value` | `composite` / 0.5 | `composite`, `momentum_12_1` or `value_momentum` (composite z blended with the point-in-time value z) |
+| `rebalance_frequency` | `monthly` | `monthly` or `quarterly` (Mar/Jun/Sep/Dec month-ends) |
+| `long_only` / `allow_margin` | false / true | No short book / allow a margin loan when longs exceed NAV + short proceeds |
+| `trend_filter` / `trend_sma_months` | false / 10 | Hold the SPY core only while SPY's month-end close > its N-month SMA |
 | `margin_debit_spread` | 0.025 | ASSUMED margin-loan rate over RF, ACT/360 (only books with net target > 100% borrow) |
 | `fixed_long_gross` / `fixed_short_gross` | 1.30 / 0.30 | Fixed sizing. With `beta_neutral` on, the short book is sized for overlay beta neutrality instead, capped at `max_side_gross` (SPY + overlay: 0.30 long, short ≤ 0.40) |
 

@@ -31,8 +31,12 @@ class StrategyConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     initial_capital: float = Field(100_000.0, gt=0, le=1e10, description="Starting capital, USD")
-    signal: Literal["composite", "momentum_12_1"] = Field(
-        "composite", description="Ranking signal: composite (residual + sector-demeaned momentum + FIP) or plain 12-1")
+    signal: Literal["composite", "momentum_12_1", "value_momentum"] = Field(
+        "composite", description="Ranking signal: composite (residual + sector-demeaned momentum + FIP), plain 12-1, or "
+                                 "value_momentum (composite z blended with a point-in-time value z, weight w_value)")
+    w_value: float = Field(0.50, ge=0, le=1, description="value_momentum: weight of the value z-score (rest: composite z)")
+    rebalance_frequency: Literal["monthly", "quarterly"] = Field(
+        "monthly", description="Form signals at every month-end, or only at quarter-ends (Mar/Jun/Sep/Dec)")
     lookback_sessions: int = Field(252, ge=2, le=1000, description="Older momentum anchor: sessions before signal")
     skip_sessions: int = Field(21, ge=0, le=252, description="Recent anchor: sessions before signal (skip month)")
     min_history_sessions: int = Field(252, ge=0, le=2000, description="Valid bars required before the signal session")
@@ -84,6 +88,12 @@ class StrategyConfig(BaseModel):
         0.30, ge=0, le=3, description="Short book gross when sizing = fixed and beta_neutral is off. With beta_neutral on, "
                                       "the short book is sized for overlay beta neutrality (long x beta_L / beta_S), "
                                       "capped at max_side_gross")
+    long_only: bool = Field(False, description="No short book (long-only satellite); beta/sector neutrality off")
+    trend_filter: bool = Field(
+        False, description="Hold the SPY core only while SPY's month-end close > its trend_sma_months simple moving "
+                           "average of month-end closes; otherwise that share of NAV stays in cash")
+    trend_sma_months: int = Field(10, ge=2, le=36, description="Trend filter SMA length (month-end closes)")
+    allow_margin: bool = Field(True, description="Allow a margin loan when longs exceed NAV + short proceeds")
     core_beta: float = Field(
         0.0, ge=0, le=1, description="SPY core: hold core_beta x NAV in the benchmark ETF under the long/short overlay. "
                                      "Rebalanced monthly; exempt from beta/sector neutrality; counts toward max_total_gross")
@@ -151,9 +161,9 @@ class StrategyConfig(BaseModel):
         """Valid-but-self-limiting settings, surfaced in the UI, plan checks and backtest warnings."""
         out = []
         if self.sizing == "fixed":
-            short_max = self.max_side_gross if self.beta_neutral else self.fixed_short_gross
+            short_max = 0.0 if self.long_only else (self.max_side_gross if self.beta_neutral else self.fixed_short_gross)
             for side, gross, cap in (("long", self.fixed_long_gross, self.max_long_weight),
-                                     ("short", short_max, self.max_short_weight)):
+                                     ("short", short_max, self.max_short_weight))[: 1 if self.long_only else 2]:
                 if self.min_names_per_side * cap < gross - 1e-12:
                     out.append(f"Per-name {side} cap limits the fixed {side} book: {self.min_names_per_side} x {cap:.2%} = "
                                f"{self.min_names_per_side * cap:.1%} < {gross:.0%} unless more names qualify.")
@@ -179,6 +189,10 @@ class StrategyConfig(BaseModel):
                 f"Per-name long cap limits the long book: {self.min_names_per_side} x {self.max_long_weight:.2%} = "
                 f"{cap_l:.1%} < max side gross {self.max_side_gross:.0%}.")
         return out
+
+    def rebalances_in(self, session: str) -> bool:
+        """Whether a month-end `session` is a rebalance (signal) session for this config."""
+        return self.rebalance_frequency == "monthly" or int(session[5:7]) in (3, 6, 9, 12)
 
     def canonical_json(self) -> str:
         return json.dumps(self.model_dump(), sort_keys=True, separators=(",", ":"))

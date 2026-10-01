@@ -473,9 +473,12 @@ def preopen_marks(panel: Panel, t: int, symbols) -> dict[str, float]:
 DEBIT_BUFFER = 0.01   # extra margin loan (fraction of NAV) for slippage and whole-share rounding
 
 
-def max_debit_fraction(targets: dict[str, float]) -> float:
+def max_debit_fraction(targets: dict[str, float], allow: bool = True) -> float:
     """Margin loan the target book needs: longs beyond NAV + short proceeds = net target - 100% (+ buffer).
-    0 for books with net exposure <= 100% - 1% (the market-neutral defaults stay fully self-financed)."""
+    0 for books with net exposure <= 100% - 1% (the market-neutral defaults stay fully self-financed) and when
+    margin is not allowed (allow=False)."""
+    if not allow:
+        return 0.0
     need = sum(targets.values()) - 1.0
     return need + DEBIT_BUFFER if need > -DEBIT_BUFFER else 0.0
 

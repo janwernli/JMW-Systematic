@@ -296,6 +296,10 @@ def get_panel(db: Database, provider: str, calendar: TradingCalendar, benchmark:
             raise ProviderError(f"No market data stored for provider '{provider}'. Run `npm run import-data` first.")
         membership = load_membership(db, provider)
         panel = build_panel(bars, acts, inst, calendar, benchmark, membership=membership if not membership.empty else None)
+        if db.scalar("SELECT 1 FROM fundamental_facts WHERE provider=? LIMIT 1", (provider,)):
+            from .fundamentals import PointInTimeFundamentals
+
+            panel.fundamentals = PointInTimeFundamentals.load(db, provider)
         _panel_cache.clear()
         _panel_cache[key] = panel
         return panel

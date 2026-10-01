@@ -51,6 +51,7 @@ class Panel:
     delist_idx: np.ndarray | None = None   # session index of last trading day, -1 if not delisted
     list_idx: np.ndarray | None = None     # session index of first bar, len(sessions) if none
     membership: np.ndarray | None = None   # bool (T, N): point-in-time index membership; None = not provided
+    fundamentals: object | None = None     # PointInTimeFundamentals (value signal); None = not loaded
 
     def __post_init__(self) -> None:
         self.sess_index = {s: i for i, s in enumerate(self.sessions)}

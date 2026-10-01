@@ -81,6 +81,7 @@ class PeriodStats(BaseModel):
     cagr: float | None
     ann_vol: float | None
     sharpe: float | None
+    investor_sharpe: float | None = None
     sortino: float | None
     max_drawdown: float
     max_dd_peak: str
@@ -126,6 +127,7 @@ class VariantReport(PeriodStats):
     avg_turnover: float | None
     annualized_turnover: float | None
     total_costs: float
+    cost_pct_nav_per_year: float | None = None
     slippage_commission: float | None
     borrow_fees: float | None
     margin_interest: float | None
@@ -162,6 +164,7 @@ class StudyResult(BaseModel):
     results: list[StudyVariantResult]
     series: list[StudySeriesPoint]
     notes: list[str]
+    survivorship_biased: bool = True
 
 
 def _study(ctx: AppContext, row: dict) -> dict:
@@ -255,4 +258,5 @@ def result(study_id: int, ctx: AppContext = Depends(get_ctx)):
                 "session": s, "benchmark": f(bench.get(s)) if bench is not None else None,
                 "benchmark_drawdown": f(bdd.get(s)) if bdd is not None else None,
                 "navs": {k: f(frame.at[s, k]) for k in frame}, "drawdowns": {k: f(dds[k].get(s)) for k in frame}})
-    return {"study": study, "results": results, "series": series, "notes": notes}
+    return {"study": study, "results": results, "series": series, "notes": notes,
+            "survivorship_biased": not prov.info.point_in_time_universe}

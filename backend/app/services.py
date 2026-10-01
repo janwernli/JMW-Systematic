@@ -20,6 +20,11 @@ log = logging.getLogger(__name__)
 
 
 def build_provider(settings: Settings) -> MarketDataProvider:
+    if settings.market_data_provider == "crsp":
+        from .data.crsp_provider import CrspCsvProvider
+
+        return CrspCsvProvider(settings.crsp_csv_path or "crsp.csv", settings.crsp_history_start,
+                               settings.crsp_benchmark_permno)
     if settings.market_data_provider == "norgate":
         from .data.norgate_provider import NorgateProvider
 

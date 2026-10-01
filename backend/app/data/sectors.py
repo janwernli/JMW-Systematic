@@ -107,6 +107,10 @@ class SecClient:
         data = self._get("https://www.sec.gov/files/company_tickers.json") or {}
         return {row["ticker"].upper(): int(row["cik_str"]) for row in data.values()}
 
+    def companyfacts(self, cik: int) -> dict | None:
+        """All XBRL facts of one company (SEC EDGAR companyfacts API); None if the SEC has none."""
+        return self._get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json")
+
     def sic(self, cik: int) -> tuple[str | None, str | None]:
         d = self._get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json") or {}
         return (str(d.get("sic")) if d.get("sic") else None), d.get("sicDescription")

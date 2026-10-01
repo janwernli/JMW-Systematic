@@ -14,6 +14,7 @@ import pandas as pd
 from ..data.panel import Panel
 from .composite import add_composite
 from .config import StrategyConfig
+from .composite import add_value_momentum
 from .long_short import build_books
 
 REASONS = {
@@ -160,6 +161,10 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[st
     if cfg.signal == "composite":
         diagnostics["composite"] = add_composite(panel, t, cfg, table)
         table["score"] = table["composite"]
+    elif cfg.signal == "value_momentum":
+        diagnostics["composite"] = add_composite(panel, t, cfg, table)
+        diagnostics["value"] = add_value_momentum(panel, t, cfg, table)
+        table["score"] = table["vm_score"]
     else:
         table["sector"] = [panel.instruments.at[x, "sector"] if isinstance(panel.instruments.at[x, "sector"], str)
                            else None for x in table["symbol"]]
@@ -186,7 +191,7 @@ def compute_signals(panel: Panel, t: int, cfg: StrategyConfig, held_long: set[st
                    f"(minimum {cfg.min_session_coverage:.0%}); data is stale or incomplete.")
     elif n_sel == 0:
         blocked = "No eligible securities at the signal session."
-    elif not (diagnostics.get("long_names") and diagnostics.get("short_names")):
+    elif not (diagnostics.get("long_names") and (diagnostics.get("short_names") or cfg.long_only)):
         blocked = "Long-short books could not be formed: " + "; ".join(diagnostics.get("notes", []))
 
     return SignalResult(
