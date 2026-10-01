@@ -442,7 +442,8 @@ class PlanSummary(BaseModel):
     id: int
     signal_session: str
     fill_session: str
-    status: Literal["proposed", "applied", "executed", "skipped", "blocked"]
+    status: Literal["proposed", "applied", "executed", "skipped", "blocked", "superseded"]
+    kind: Literal["month_end", "replan"] = "month_end"
     block_reason: str | None
     created_at: str
     decided_at: str | None

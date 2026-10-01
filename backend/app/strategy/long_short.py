@@ -195,13 +195,26 @@ def build_books(panel: Panel, t: int, cfg: StrategyConfig, table: pd.DataFrame, 
         return float(np.std(unit, ddof=1) * math.sqrt(252)) if len(unit) > 2 else float("nan")
 
     if cfg.sizing == "fixed":
-        GL, GS = min(cfg.fixed_long_gross, capL_tot), min(cfg.fixed_short_gross, capS_tot)
-        if GL < cfg.fixed_long_gross - 1e-12 or GS < cfg.fixed_short_gross - 1e-12:
-            binding.append("fixed gross limited by per-name cap capacity")
+        GL = min(cfg.fixed_long_gross, capL_tot)
+        if GL < cfg.fixed_long_gross - 1e-12:
+            binding.append("fixed long gross limited by per-name cap capacity")
+        if cfg.beta_neutral:
+            # Short book sized for overlay beta neutrality: GS = GL x beta_L / beta_S, capped at max_side_gross.
+            wL0 = waterfill(rawL, GL, cfg.max_long_weight)
+            wS0 = waterfill(rawS, min(GL, capS_tot), cfg.max_short_weight)
+            _, _, ratio0 = side_betas(wL0, wS0)
+            want = ratio0 * GL
+            GS = min(want, cfg.max_side_gross, capS_tot)
+            if GS < want - 1e-12:
+                binding.append(f"beta-neutral short book {want:.1%} capped at {GS:.1%} (overlay not fully beta-neutral)")
+        else:
+            GS = min(cfg.fixed_short_gross, capS_tot)
+            if GS < cfg.fixed_short_gross - 1e-12:
+                binding.append("fixed short gross limited by per-name cap capacity")
         if GL + GS > overlay_cap + 1e-12:
-            scale = overlay_cap / (GL + GS)
+            scale = overlay_cap / (GL + GS)   # both sides scaled: keeps the beta ratio
             GL, GS = GL * scale, GS * scale
-            binding.append(f"fixed books scaled x{scale:.3f} to the total gross cap")
+            binding.append(f"overlay scaled x{scale:.3f} to keep total gross within {cfg.max_total_gross:.0%}")
         wL = waterfill(rawL, GL, cfg.max_long_weight)
         wS = waterfill(rawS, GS, cfg.max_short_weight)
         betaL, betaS, ratio = side_betas(wL, wS)

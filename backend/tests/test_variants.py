@@ -57,7 +57,10 @@ def test_variant_definitions_match_the_spec():
     n15 = VARIANT_BY_KEY["neutral_15"].config()
     assert (n15.target_vol, n15.max_side_gross, n15.max_total_gross) == (0.15, 1.0, 2.0)
     spy = VARIANT_BY_KEY["spy_overlay"].config()
-    assert (spy.core_beta, spy.target_vol, spy.max_total_gross, spy.beta_neutral) == (1.0, 0.08, 2.0, True)
+    assert (spy.core_beta, spy.sizing, spy.fixed_long_gross, spy.max_side_gross, spy.max_total_gross) ==         (1.0, "fixed", 0.30, 0.40, 1.6)
+    assert spy.beta_neutral and spy.sector_neutral and spy.crash_guard and spy.signal == "composite"
+    assert (spy.short_stop_loss, spy.short_min_price, spy.htb_exclude_pct) == (0.5, 10.0, 0.20)
+    assert any("could exceed 160%" in w for w in spy.config_warnings())
     ext = VARIANT_BY_KEY["ext_130_30"].config()
     assert (ext.sizing, ext.fixed_long_gross, ext.fixed_short_gross, ext.beta_neutral, ext.max_total_gross) == \
         ("fixed", 1.3, 0.3, False, 1.6)
@@ -234,7 +237,7 @@ def test_variant_study_api_runs_all_four_on_the_same_period(tmp_path, monkeypatc
     run_import(ctx.db, prov, cal)
     with TestClient(create_app(settings, ctx=ctx)) as c:
         ov = c.get("/api/research/variants").json()
-        assert [v["key"] for v in ov["variants"]] == [v.key for v in VARIANTS] and ov["paper_default"] == "Neutral 10%"
+        assert [v["key"] for v in ov["variants"]] == [v.key for v in VARIANTS] and ov["paper_default"] == "No model portfolio"
         study = c.post("/api/research/variants/studies", json={}).json()
         assert len(study["runs"]) == 4
         for _ in range(600):

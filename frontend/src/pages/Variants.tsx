@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Alert, Badge, Button, Group, Progress, Select, Stack, Text, TextInput, Tooltip } from "@mantine/core";
-import { IconPlayerPlay } from "@tabler/icons-react";
+import { Alert, Badge, Button, Checkbox, Group, Modal, Progress, Select, Stack, Text, TextInput, Tooltip } from "@mantine/core";
+import { IconPlayerPlay, IconRobot } from "@tabler/icons-react";
 import type { S } from "../api/client";
-import { useLaunchVariantStudy, useVariantStudy, useVariants } from "../api/hooks";
+import { DataTable } from "../components/DataTable";
+import { KV } from "../components/ui";
+import { useLaunchVariantStudy, usePaperStrategy, useSwitchApply, useSwitchPreview, useVariantStudy, useVariants } from "../api/hooks";
 import { EChart, baseOption, lineSeries, timeAxis, valueAxis, zoom } from "../components/EChart";
 import { Empty, ErrorView, Loading, Panel, Signed } from "../components/ui";
 import { C } from "../lib/colors";
@@ -28,6 +30,8 @@ export function Variants() {
     if (data && studyId == null && data.studies.length) setStudyId(data.studies[0].id);
   }, [data, studyId]);
   const study = useVariantStudy(studyId);
+  const paper = usePaperStrategy();
+  const [switchTo, setSwitchTo] = useState<S["VariantDef"] | null>(null);
 
   if (isLoading) return <div className="page"><Loading what="strategy variants" /></div>;
   if (error || !data) return <div className="page"><ErrorView error={error} retry={refetch} /></div>;
@@ -39,7 +43,7 @@ export function Variants() {
           <h1 className="page-title">Strategy Variants</h1>
           <div className="page-sub">
             Four pre-defined variants, each run once on the same data and period. Nothing here is tuned to the backtest.
-            The paper default stays <b>{data.paper_default}</b> until you choose otherwise.
+            Paper trading currently uses <b>{paper.data?.name ?? "…"}</b>; switch with “Use for paper trading”.
           </div>
         </div>
         <Group gap={8} align="flex-end">
@@ -55,11 +59,13 @@ export function Variants() {
         </Group>
       </div>
 
+      {switchTo && <SwitchModal variant={switchTo} onClose={() => setSwitchTo(null)} />}
+
       <div className="grid-12">
         <Panel className="span-12" title="Variant definitions" pad={false}
           source="Everything not listed is the current default configuration. The 130/30 per-name long cap follows from the spec (130% / the 50-name minimum book), not from tuning.">
           <table className="dt">
-            <thead><tr><th>Variant</th><th>What it is</th><th>Changes vs. default</th></tr></thead>
+            <thead><tr><th>Variant</th><th>What it is</th><th>Changes vs. default</th><th>Paper trading</th></tr></thead>
             <tbody>
               {data.variants.map((v, i) => (
                 <tr key={v.key}>
@@ -71,6 +77,11 @@ export function Variants() {
                     {v.config_warnings.map((w, k) => <Text key={k} size="10px" c="yellow.5">{w}</Text>)}</td>
                   <td className="num" style={{ whiteSpace: "normal" }}>
                     {Object.keys(v.overrides).length ? Object.entries(v.overrides).map(([k, val]) => `${k}=${String(val)}`).join(", ") : "none (defaults)"}
+                  </td>
+                  <td>
+                    {paper.data?.key === v.key
+                      ? <Badge color="teal" variant="light" leftSection={<IconRobot size={11} />}>Paper strategy</Badge>
+                      : <Button size="compact-xs" variant="default" onClick={() => setSwitchTo(v)}>Use for paper trading…</Button>}
                   </td>
                 </tr>
               ))}
@@ -258,5 +269,89 @@ function MarginPanel({ results }: { results: S["StudyVariantResult"][] }) {
         );
       })}
     </Panel>
+  );
+}
+
+function SwitchModal({ variant, onClose }: { variant: S["VariantDef"]; onClose: () => void }) {
+  const [replanNow, setReplanNow] = useState(true);
+  const pv = useSwitchPreview();
+  const apply = useSwitchApply();
+  const { mutate } = pv;
+  useEffect(() => { mutate({ variant: variant.key, replan_now: replanNow }); }, [mutate, variant.key, replanNow]);
+  const d = pv.data;
+  const b = d?.book;
+  const blocked = typeof d?.replan.blocked === "string" ? (d.replan.blocked as string) : null;
+  const buys = d?.orders.filter((o) => o.side === "buy").reduce((a, o) => a + o.value, 0) ?? 0;
+  const sells = d?.orders.filter((o) => o.side === "sell").reduce((a, o) => a + o.value, 0) ?? 0;
+  return (
+    <Modal opened onClose={onClose} size="80rem" centered title={`Use “${variant.name}” for paper trading`}>
+      <Stack gap={10}>
+        <Text size="xs" c="dimmed">
+          Changes the active model portfolio's configuration (a new config version); the Alpaca PAPER account follows the
+          model's plans. Same logic as <code>python -m app paper-config --variant {variant.key}</code>. Research variants are unaffected.
+        </Text>
+        <Checkbox size="xs" checked={replanNow} onChange={(e) => setReplanNow(e.currentTarget.checked)}
+          label="Replan now: rebuild the latest month-end plan with the new config and trade it at the next 08:00 ET run (otherwise from the next month-end)" />
+        {pv.isPending || !d ? <Loading what="preview (target book and orders)" /> : (
+          <>
+            <Group gap={8}>
+              <Badge variant="light">from: {d.current.name}</Badge><Text size="xs">→</Text><Badge color="teal" variant="light">{d.variant.name}</Badge>
+              <Badge variant="outline" color={d.rebalance_mode === "approve" ? "blue" : "orange"}>rebalance mode: {d.rebalance_mode}</Badge>
+              {!d.trading_enabled && <Badge variant="outline" color="yellow">BROKER_TRADING_ENABLED=false: nothing is sent</Badge>}
+            </Group>
+            <Alert color={blocked ? "red" : d.replan.action === "replan" ? "teal" : "gray"} variant="light" p="xs">
+              <Text size="xs"><b>Replan: {String(d.replan.action).replace("_", " ")}.</b> {String(d.replan.detail ?? "")}</Text>
+              {blocked && <Text size="xs" c="red.4" mt={4}>{blocked}</Text>}
+            </Alert>
+            {d.config_warnings.map((w, i) => <Text key={i} size="10px" c="yellow.5">{w}</Text>)}
+            <div className="grid-12">
+              <Panel className="span-5" title="Settings that change">
+                {Object.keys(d.changes).length === 0 ? <Text size="xs" c="dimmed">None: already this variant.</Text> : (
+                  <table className="dt dense"><tbody>
+                    {Object.entries(d.changes).map(([k, [a, bb]]) => (
+                      <tr key={k}><td>{k}</td><td className="num muted">{String(a)}</td><td className="num">→ {String(bb)}</td></tr>
+                    ))}
+                  </tbody></table>
+                )}
+              </Panel>
+              <Panel className="span-7" title={b ? `Target book (signal ${b.signal_session})` : "Target book"}>
+                {!b ? <Text size="xs" c="dimmed">No month-end signal available.</Text> : (
+                  <KV rows={[
+                    ["SPY core", fmtPct(b.spy_weight, 0)],
+                    ["Longs / shorts", `${b.longs} / ${b.shorts}`],
+                    ["Overlay long / short gross", `${fmtPct(b.long_gross, 1)} / ${fmtPct(b.short_gross, 1)}`],
+                    ["Total gross / net", `${fmtPct(b.total_gross, 1)} / ${fmtPct(b.net_exposure, 1, true)}`],
+                    ["Est. overlay beta", b.overlay_beta == null ? "—" : b.overlay_beta.toFixed(3)],
+                    ["Crash guard", b.crash_guard ? "ON (overlay short book scaled)" : "off"],
+                    ["Max sector net", fmtPct(b.max_sector_net, 2)],
+                    ...(b.binding.length ? [["Binding", b.binding.join("; ")] as [string, string]] : []),
+                    ...(b.blocked_reason ? [["BLOCKED", b.blocked_reason] as [string, string]] : []),
+                  ]} />
+                )}
+              </Panel>
+            </div>
+            <Panel title={`Orders (${d.orders.length}): buy ${fmtUsd(buys)} · sell ${fmtUsd(sells)}`} pad={false} source={d.orders_basis ?? undefined}>
+              <DataTable<S["PreviewOrder"]> data={d.orders} maxHeight={300} empty="No orders"
+                cols={[
+                  { id: "sym", header: "Symbol", value: (r) => r.symbol, cell: (r) => <b>{r.symbol}</b> },
+                  { id: "side", header: "Side", value: (r) => r.side, cell: (r) => <Badge size="xs" variant="light" color={r.side === "buy" ? "blue" : "orange"}>{r.side}</Badge> },
+                  { id: "eff", header: "Effect", value: (r) => r.effect, cell: (r) => r.effect.replace("_", " ") },
+                  { id: "qty", header: "Qty", align: "right", value: (r) => r.qty, cell: (r) => fmtNum(r.qty) },
+                  { id: "val", header: "≈ Value", align: "right", value: (r) => r.value, cell: (r) => fmtUsd(r.value) },
+                  { id: "why", header: "Reason", value: (r) => r.why, cell: (r) => <Text size="10px" c="dimmed" truncate maw={380}>{r.why}</Text> },
+                ]} />
+            </Panel>
+            <Group justify="flex-end">
+              <Button variant="default" onClick={onClose}>Cancel</Button>
+              <Button color="teal" disabled={!!blocked} loading={apply.isPending}
+                onClick={() => apply.mutate({ variant: variant.key, replan_now: replanNow, expected_orders: d.orders.length },
+                  { onSuccess: onClose })}>
+                Switch paper trading to {d.variant.name}
+              </Button>
+            </Group>
+          </>
+        )}
+      </Stack>
+    </Modal>
   );
 }

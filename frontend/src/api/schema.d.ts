@@ -748,10 +748,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/paper/strategy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Current */
+        get: operations["current_api_paper_strategy_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper/strategy/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch Preview
+         * @description Dry run: settings, target book and orders, without changing anything.
+         */
+        post: operations["switch_preview_api_paper_strategy_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/paper/strategy/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch Apply
+         * @description Switch the active model portfolio (and so the Alpaca paper account) to the variant.
+         */
+        post: operations["switch_apply_api_paper_strategy_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActiveVariant */
+        ActiveVariant: {
+            /** Key */
+            key: string | null;
+            /** Name */
+            name: string;
+        };
         /** AdvanceResponse */
         AdvanceResponse: {
             /** Processed */
@@ -916,6 +980,13 @@ export interface components {
             open_orders: number;
             /** Rebalance Mode */
             rebalance_mode: string;
+            /**
+             * Paper Variant
+             * @default {}
+             */
+            paper_variant: {
+                [key: string]: string | null;
+            };
             /** Awaiting Approval */
             awaiting_approval: components["schemas"]["BrokerOrder"][];
             awaiting_plan?: components["schemas"]["AwaitingPlan"] | null;
@@ -1470,7 +1541,13 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "proposed" | "applied" | "executed" | "skipped" | "blocked";
+            status: "proposed" | "applied" | "executed" | "skipped" | "blocked" | "superseded";
+            /**
+             * Kind
+             * @default month_end
+             * @enum {string}
+             */
+            kind: "month_end" | "replan";
             /** Block Reason */
             block_reason: string | null;
             /** Created At */
@@ -1561,7 +1638,13 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "proposed" | "applied" | "executed" | "skipped" | "blocked";
+            status: "proposed" | "applied" | "executed" | "skipped" | "blocked" | "superseded";
+            /**
+             * Kind
+             * @default month_end
+             * @enum {string}
+             */
+            kind: "month_end" | "replan";
             /** Block Reason */
             block_reason: string | null;
             /** Created At */
@@ -1702,6 +1785,27 @@ export interface components {
             concentration: components["schemas"]["Concentration"];
             /** Plan Signal Session */
             plan_signal_session: string | null;
+        };
+        /** PreviewOrder */
+        PreviewOrder: {
+            /** Origin */
+            origin: string;
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /** Qty */
+            qty: number;
+            /** Effect */
+            effect: string;
+            /** Ref */
+            ref: number;
+            /** Value */
+            value: number;
+            /** Why */
+            why: string;
+            /** Plan Id */
+            plan_id: number;
         };
         /** PricePoint */
         PricePoint: {
@@ -2306,7 +2410,7 @@ export interface components {
             fixed_long_gross: number;
             /**
              * Fixed Short Gross
-             * @description Short book gross when sizing = fixed, fraction of NAV
+             * @description Short book gross when sizing = fixed and beta_neutral is off. With beta_neutral on, the short book is sized for overlay beta neutrality (long x beta_L / beta_S), capped at max_side_gross
              * @default 0.3
              */
             fixed_short_gross: number;
@@ -2471,6 +2575,61 @@ export interface components {
             status: string;
             report: components["schemas"]["VariantReport"] | null;
         };
+        /** SwitchPreview */
+        SwitchPreview: {
+            /** Variant */
+            variant: {
+                [key: string]: string;
+            };
+            current: components["schemas"]["ActiveVariant"];
+            /** Changes */
+            changes: {
+                [key: string]: unknown[];
+            };
+            config: components["schemas"]["StrategyConfig"];
+            /** Config Warnings */
+            config_warnings: string[];
+            /** Ledger As Of */
+            ledger_as_of: string;
+            /** Rebalance Mode */
+            rebalance_mode: string;
+            /** Trading Enabled */
+            trading_enabled: boolean;
+            /** Replan */
+            replan: {
+                [key: string]: unknown;
+            };
+            book: components["schemas"]["TargetBook"] | null;
+            /** Orders */
+            orders: components["schemas"]["PreviewOrder"][];
+            /** Orders Basis */
+            orders_basis: string | null;
+        };
+        /** SwitchRequest */
+        SwitchRequest: {
+            /** Variant */
+            variant: string;
+            /**
+             * Replan Now
+             * @default true
+             */
+            replan_now: boolean;
+            /** Expected Orders */
+            expected_orders?: number | null;
+        };
+        /** SwitchResult */
+        SwitchResult: {
+            /** Message */
+            message: string;
+            /** Changed */
+            changed: boolean;
+            /** Plan Id */
+            plan_id: number | null;
+            /** Replan */
+            replan: {
+                [key: string]: unknown;
+            };
+        };
         /** SystemStatus */
         SystemStatus: {
             /** App Version */
@@ -2500,6 +2659,41 @@ export interface components {
             server_time_utc: string;
             /** Bind Host */
             bind_host: string;
+        };
+        /** TargetBook */
+        TargetBook: {
+            /** Signal Session */
+            signal_session: string;
+            /** Blocked Reason */
+            blocked_reason: string | null;
+            /** Spy Weight */
+            spy_weight: number;
+            /** Longs */
+            longs: number;
+            /** Shorts */
+            shorts: number;
+            /** Long Gross */
+            long_gross: number | null;
+            /** Short Gross */
+            short_gross: number | null;
+            /** Total Gross */
+            total_gross: number | null;
+            /** Net Exposure */
+            net_exposure: number | null;
+            /** Overlay Beta */
+            overlay_beta: number | null;
+            /** Beta Long */
+            beta_long: number | null;
+            /** Beta Short */
+            beta_short: number | null;
+            /** Crash Guard */
+            crash_guard: boolean;
+            /** Max Sector Net */
+            max_sector_net: number | null;
+            /** Binding */
+            binding: string[];
+            /** Notes */
+            notes: string[];
         };
         /** ToggleRequest */
         ToggleRequest: {
@@ -3981,6 +4175,92 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StudyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    current_api_paper_strategy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActiveVariant"];
+                };
+            };
+        };
+    };
+    switch_preview_api_paper_strategy_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    switch_apply_api_paper_strategy_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchResult"];
                 };
             };
             /** @description Validation Error */

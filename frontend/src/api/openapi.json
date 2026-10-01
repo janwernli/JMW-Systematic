@@ -1751,10 +1751,140 @@
           }
         }
       }
+    },
+    "/api/paper/strategy": {
+      "get": {
+        "tags": [
+          "paper"
+        ],
+        "summary": "Current",
+        "operationId": "current_api_paper_strategy_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveVariant"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/strategy/preview": {
+      "post": {
+        "tags": [
+          "paper"
+        ],
+        "summary": "Switch Preview",
+        "description": "Dry run: settings, target book and orders, without changing anything.",
+        "operationId": "switch_preview_api_paper_strategy_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwitchPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/paper/strategy/apply": {
+      "post": {
+        "tags": [
+          "paper"
+        ],
+        "summary": "Switch Apply",
+        "description": "Switch the active model portfolio (and so the Alpaca paper account) to the variant.",
+        "operationId": "switch_apply_api_paper_strategy_apply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwitchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ActiveVariant": {
+        "properties": {
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name"
+        ],
+        "title": "ActiveVariant"
+      },
       "AdvanceResponse": {
         "properties": {
           "processed": {
@@ -2267,6 +2397,21 @@
           "rebalance_mode": {
             "type": "string",
             "title": "Rebalance Mode"
+          },
+          "paper_variant": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Paper Variant",
+            "default": {}
           },
           "awaiting_approval": {
             "items": {
@@ -4371,9 +4516,19 @@
               "applied",
               "executed",
               "skipped",
-              "blocked"
+              "blocked",
+              "superseded"
             ],
             "title": "Status"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "month_end",
+              "replan"
+            ],
+            "title": "Kind",
+            "default": "month_end"
           },
           "block_reason": {
             "anyOf": [
@@ -4675,9 +4830,19 @@
               "applied",
               "executed",
               "skipped",
-              "blocked"
+              "blocked",
+              "superseded"
             ],
             "title": "Status"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "month_end",
+              "replan"
+            ],
+            "title": "Kind",
+            "default": "month_end"
           },
           "block_reason": {
             "anyOf": [
@@ -5177,6 +5342,59 @@
           "plan_signal_session"
         ],
         "title": "PositionsResponse"
+      },
+      "PreviewOrder": {
+        "properties": {
+          "origin": {
+            "type": "string",
+            "title": "Origin"
+          },
+          "symbol": {
+            "type": "string",
+            "title": "Symbol"
+          },
+          "side": {
+            "type": "string",
+            "title": "Side"
+          },
+          "qty": {
+            "type": "integer",
+            "title": "Qty"
+          },
+          "effect": {
+            "type": "string",
+            "title": "Effect"
+          },
+          "ref": {
+            "type": "number",
+            "title": "Ref"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value"
+          },
+          "why": {
+            "type": "string",
+            "title": "Why"
+          },
+          "plan_id": {
+            "type": "integer",
+            "title": "Plan Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "origin",
+          "symbol",
+          "side",
+          "qty",
+          "effect",
+          "ref",
+          "value",
+          "why",
+          "plan_id"
+        ],
+        "title": "PreviewOrder"
       },
       "PricePoint": {
         "properties": {
@@ -6778,7 +6996,7 @@
             "maximum": 3.0,
             "minimum": 0.0,
             "title": "Fixed Short Gross",
-            "description": "Short book gross when sizing = fixed, fraction of NAV",
+            "description": "Short book gross when sizing = fixed and beta_neutral is off. With beta_neutral on, the short book is sized for overlay beta neutrality (long x beta_L / beta_S), capped at max_side_gross",
             "default": 0.3
           },
           "core_beta": {
@@ -7149,6 +7367,164 @@
         ],
         "title": "StudyVariantResult"
       },
+      "SwitchPreview": {
+        "properties": {
+          "variant": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Variant"
+          },
+          "current": {
+            "$ref": "#/components/schemas/ActiveVariant"
+          },
+          "changes": {
+            "additionalProperties": {
+              "items": {},
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Changes"
+          },
+          "config": {
+            "$ref": "#/components/schemas/StrategyConfig"
+          },
+          "config_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Config Warnings"
+          },
+          "ledger_as_of": {
+            "type": "string",
+            "title": "Ledger As Of"
+          },
+          "rebalance_mode": {
+            "type": "string",
+            "title": "Rebalance Mode"
+          },
+          "trading_enabled": {
+            "type": "boolean",
+            "title": "Trading Enabled"
+          },
+          "replan": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Replan"
+          },
+          "book": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TargetBook"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewOrder"
+            },
+            "type": "array",
+            "title": "Orders"
+          },
+          "orders_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orders Basis"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variant",
+          "current",
+          "changes",
+          "config",
+          "config_warnings",
+          "ledger_as_of",
+          "rebalance_mode",
+          "trading_enabled",
+          "replan",
+          "book",
+          "orders",
+          "orders_basis"
+        ],
+        "title": "SwitchPreview"
+      },
+      "SwitchRequest": {
+        "properties": {
+          "variant": {
+            "type": "string",
+            "title": "Variant"
+          },
+          "replan_now": {
+            "type": "boolean",
+            "title": "Replan Now",
+            "default": true
+          },
+          "expected_orders": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Orders"
+          }
+        },
+        "type": "object",
+        "required": [
+          "variant"
+        ],
+        "title": "SwitchRequest"
+      },
+      "SwitchResult": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "changed": {
+            "type": "boolean",
+            "title": "Changed"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "replan": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Replan"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "changed",
+          "plan_id",
+          "replan"
+        ],
+        "title": "SwitchResult"
+      },
       "SystemStatus": {
         "properties": {
           "app_version": {
@@ -7262,6 +7638,163 @@
           "bind_host"
         ],
         "title": "SystemStatus"
+      },
+      "TargetBook": {
+        "properties": {
+          "signal_session": {
+            "type": "string",
+            "title": "Signal Session"
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          },
+          "spy_weight": {
+            "type": "number",
+            "title": "Spy Weight"
+          },
+          "longs": {
+            "type": "integer",
+            "title": "Longs"
+          },
+          "shorts": {
+            "type": "integer",
+            "title": "Shorts"
+          },
+          "long_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Gross"
+          },
+          "short_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Short Gross"
+          },
+          "total_gross": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Gross"
+          },
+          "net_exposure": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Net Exposure"
+          },
+          "overlay_beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overlay Beta"
+          },
+          "beta_long": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta Long"
+          },
+          "beta_short": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Beta Short"
+          },
+          "crash_guard": {
+            "type": "boolean",
+            "title": "Crash Guard"
+          },
+          "max_sector_net": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Sector Net"
+          },
+          "binding": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Binding"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "signal_session",
+          "blocked_reason",
+          "spy_weight",
+          "longs",
+          "shorts",
+          "long_gross",
+          "short_gross",
+          "total_gross",
+          "net_exposure",
+          "overlay_beta",
+          "beta_long",
+          "beta_short",
+          "crash_guard",
+          "max_sector_net",
+          "binding",
+          "notes"
+        ],
+        "title": "TargetBook"
       },
       "ToggleRequest": {
         "properties": {

@@ -32,9 +32,13 @@ VARIANTS: tuple[Variant, ...] = (
             "Same book at a 15% vol target: up to 100% gross per side and 200% total (Alpaca Reg T 2x limit).",
             {"target_vol": 0.15, "max_side_gross": 1.0, "max_total_gross": 2.0}),
     Variant("spy_overlay", "SPY + overlay",
-            "100% of NAV in SPY (rebalanced monthly) plus the market-neutral long/short overlay at an 8% vol "
-            "target. Beta/sector neutrality apply to the overlay only; SPY + long + short gross <= 200%.",
-            {"core_beta": 1.0, "target_vol": 0.08, "max_total_gross": 2.0}),
+            "100% of NAV in SPY (rebalanced monthly) plus a long/short overlay from the same composite signal "
+            "(deciles, buffer, inverse-vol weights, sector-neutral): long book fixed at 30% of NAV, short book sized for "
+            "overlay beta neutrality (~30%, capped at 40%). Total gross <= 160% (both overlay sides scaled together if "
+            "needed); crash guard scales the overlay short book. Stop-loss, $10 short floor, HTB screen and easy-to-"
+            "borrow check unchanged.",
+            {"core_beta": 1.0, "sizing": "fixed", "fixed_long_gross": 0.30, "min_side_gross": 0.30,
+             "max_side_gross": 0.40, "max_total_gross": 1.6}),
     Variant("ext_130_30", "130/30",
             "Long book 130%, short book 30% of NAV from the same signal; no beta neutralization, no vol target, "
             "gross cap 160%. Sector neutrality is off: a 100% net-long book cannot keep every sector within +/-2% "
@@ -44,3 +48,16 @@ VARIANTS: tuple[Variant, ...] = (
 )
 
 VARIANT_BY_KEY = {v.key: v for v in VARIANTS}
+
+# Config fields that do not define a strategy (excluded when recognising which variant a config is).
+_NON_STRATEGY = {"initial_capital", "start_date", "end_date", "benchmark_symbol"}
+
+
+def variant_of(cfg: StrategyConfig) -> Variant | None:
+    """The pre-defined variant whose strategy settings equal `cfg` (None = a custom config)."""
+    mine = {k: v for k, v in cfg.model_dump().items() if k not in _NON_STRATEGY}
+    for v in VARIANTS:
+        theirs = {k: x for k, x in v.config().model_dump().items() if k not in _NON_STRATEGY}
+        if mine == theirs:
+            return v
+    return None

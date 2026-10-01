@@ -67,6 +67,28 @@ def set_setting(db, key: str, value: str) -> None:
         log_event(conn, "warning", "automation", f"Setting {key} changed to {value}")
 
 
+def account_margin_flags(account: dict, max_total_gross: float, tolerance: float = 0.05) -> list[str]:
+    """Margin checks on the actual Alpaca account (same limits as the backtest's margin flags)."""
+    def f(k):
+        try:
+            return float(account.get(k) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+    eq = f("equity")
+    if eq <= 0:
+        return []
+    gross = (f("long_market_value") + abs(f("short_market_value"))) / eq
+    out = []
+    if gross > 2.0:
+        out.append(f"MARGIN: gross exposure {gross:.2f}x equity > 2.0x (Reg T)")
+    elif gross > max_total_gross + tolerance:
+        out.append(f"gross exposure {gross:.2f}x above the strategy cap {max_total_gross:.2f}x (drift since the rebalance)")
+    maint = f("maintenance_margin")
+    if maint and eq < maint:
+        out.append(f"MARGIN: equity ${eq:,.0f} below maintenance requirement ${maint:,.0f}")
+    return out
+
+
 def rebalance_mode(db) -> str:
     mode = get_setting(db, "rebalance_mode", "approve")
     return mode if mode in REBALANCE_MODES else "approve"
@@ -88,6 +110,57 @@ def submission_mode(now: datetime, fill_session: str, clock_is_open: bool | None
     if et.date() == fs and clock_is_open:
         return "day", "LATE: opening-auction window missed; market order during the session"
     return None, "outside the submission window; orders stay planned for the next run"
+
+
+def rebalance_orders(plan_id: int, targets: dict[str, float], positions: dict[str, dict], equity: float,
+                     closes: dict[str, float], prior: dict[str, list[str]], skip: set[str]) -> list[dict]:
+    """Orders that move the ACTUAL positions to the plan's target weights (pure; no I/O).
+
+    targets: signed weights of NAV; positions: {symbol: {"qty": signed}}; prior: this plan's earlier broker order
+    statuses per symbol. Names held but not in the targets are sold / covered; flips are split.
+    """
+    out = []
+    for sym in sorted(set(targets) | set(positions)):
+        if sym in skip:
+            continue
+        st = prior.get(sym, [])
+        if "declined" in st:
+            continue  # the user declined this plan's order for the symbol: no retries for this plan
+        if any(s in PENDING for s in st):
+            continue  # an order for this plan is still working at the broker
+        st = [s for s in st if s not in ("planned", "expired_unsent", "superseded")]  # unsent drafts: re-planned in place
+        w = targets.get(sym, 0.0)
+        cur = positions.get(sym, {}).get("qty", 0)
+        ref = closes.get(sym)
+        if ref is None or ref <= 0:
+            continue
+        tgt = int(math.trunc(w * equity / ref))
+        if any(s in TERMINAL_OK for s in st) and (tgt == 0) == (cur == 0) and (tgt > 0) == (cur > 0):
+            continue  # already traded for this plan and on the right side: no re-trading on equity drift
+        if tgt == cur:
+            continue
+        if cur > 0 and tgt < 0:
+            side, qty, effect, why = "sell", cur, "close_long", "flip long->short: close first, short next run"
+        elif cur < 0 and tgt > 0:
+            side, qty, effect, why = "buy", -cur, "close_short", "flip short->long: cover first, buy next run"
+        elif tgt > cur:
+            side, qty = "buy", tgt - cur
+            effect, why = ("close_short" if cur < 0 else "open_long"), "rebalance to target"
+        else:
+            side, qty = "sell", cur - tgt
+            effect, why = ("close_long" if cur > 0 and tgt >= 0 else "open_short"), "rebalance to target"
+        n = len(st)
+        out.append({"cid": f"p{plan_id}-{sym}-{n}", "origin": "rebalance" if n == 0 else "catch_up",
+                    "plan_id": plan_id, "symbol": sym, "side": side, "qty": qty, "effect": effect, "ref": ref,
+                    "why": f"{why}; target {tgt} sh ({w:+.2%} of ${equity:,.0f}), current {cur}"})
+    return out
+
+
+def latest_plan(db, pid: int) -> dict | None:
+    """The plan the account should follow: newest by signal session, then id (a replan shares its month-end
+    signal session with the plan it superseded)."""
+    return db.query_one("SELECT * FROM rebalance_plans WHERE portfolio_id=? AND status <> 'superseded' "
+                        "ORDER BY signal_session DESC, id DESC LIMIT 1", (pid,))
 
 
 class DailyCycle:
@@ -159,6 +232,11 @@ class DailyCycle:
                 st.data = {"equity": float(account.get("equity", 0)),
                            "longs": sum(1 for p in positions.values() if p["qty"] > 0),
                            "shorts": sum(1 for p in positions.values() if p["qty"] < 0)}
+                flags = account_margin_flags(account, self._cap())
+                if flags:
+                    st.status = "error" if any(f.startswith("MARGIN") for f in flags) else "warning"
+                    st.detail += "; " + "; ".join(flags)
+                st.data["margin_flags"] = flags
             except BrokerError as e:
                 st.status, st.detail = "error", str(e)
         steps.append(st)
@@ -171,8 +249,7 @@ class DailyCycle:
                 ctx.ledger.initialize(StrategyConfig(), inception_session=latest, name="Model portfolio")
             res = ctx.ledger.advance(auto_apply=True)
             pid = ctx.ledger.active()["id"]
-            plan = self.db.query_one("SELECT * FROM rebalance_plans WHERE portfolio_id=? ORDER BY signal_session DESC "
-                                     "LIMIT 1", (pid,))
+            plan = latest_plan(self.db, pid)
             if plan and plan["status"] == "proposed" and plan["signal_session"] == ctx.ledger.active()["as_of_session"]:
                 ctx.ledger.apply_plan(plan["id"])
                 plan = self.db.query_one("SELECT * FROM rebalance_plans WHERE id=?", (plan["id"],))
@@ -201,13 +278,21 @@ class DailyCycle:
         orders += self._stop_orders(cfg, positions, closes, latest, next_s)
         stopping = {o["symbol"] for o in orders}
         if plan and plan["status"] in ("applied", "executed") and not plan["block_reason"]:
-            age = self.cal.index(latest) - self.cal.index(plan["signal_session"])
+            # Sessions since the plan's fill session (month-end plans: fill = signal + 1 session; replans fill
+            # the session after they were built, mid-month).
+            age = self.cal.index(next_s) - self.cal.index(plan["fill_session"])
             if 0 <= age <= RECONCILE_SESSIONS:
                 orders += self._reconcile(plan, positions, equity, closes, latest, next_s, stopping)
         st = self._submit(orders, now, next_s, clock_open, dry_run)
         steps.append(st)
 
     # ------------------------------------------------------------------ helpers
+    def _cap(self) -> float:
+        try:
+            return self.ctx.ledger.config_of(self.ctx.ledger.active()).max_total_gross
+        except Exception:  # noqa: BLE001 - no portfolio yet
+            return StrategyConfig().max_total_gross
+
     def _sync(self, now: datetime):
         b = self.broker
         acct = b.account()
@@ -285,41 +370,7 @@ class DailyCycle:
         prior = {}
         for o in self.db.query("SELECT symbol, status FROM broker_orders WHERE plan_id=? ORDER BY id", (plan["id"],)):
             prior.setdefault(o["symbol"], []).append(o["status"])
-        out = []
-        for sym in sorted(set(targets) | set(positions)):
-            if sym in skip:
-                continue
-            st = prior.get(sym, [])
-            if "declined" in st:
-                continue  # the user declined this plan's order for the symbol: no retries for this plan
-            if any(s in PENDING for s in st):
-                continue  # an order for this plan is still working at the broker
-            st = [s for s in st if s not in ("planned", "expired_unsent", "superseded")]  # unsent drafts: re-planned in place
-            w = targets.get(sym, 0.0)
-            cur = positions.get(sym, {}).get("qty", 0)
-            ref = closes.get(sym)
-            if ref is None or ref <= 0:
-                continue
-            tgt = int(math.trunc(w * equity / ref))
-            if any(s in TERMINAL_OK for s in st) and (tgt == 0) == (cur == 0) and (tgt > 0) == (cur > 0):
-                continue  # already traded for this plan and on the right side: no re-trading on equity drift
-            if tgt == cur:
-                continue
-            if cur > 0 and tgt < 0:
-                side, qty, effect, why = "sell", cur, "close_long", "flip long->short: close first, short next run"
-            elif cur < 0 and tgt > 0:
-                side, qty, effect, why = "buy", -cur, "close_short", "flip short->long: cover first, buy next run"
-            elif tgt > cur:
-                side, qty = "buy", tgt - cur
-                effect, why = ("close_short" if cur < 0 else "open_long"), "rebalance to target"
-            else:
-                side, qty = "sell", cur - tgt
-                effect, why = ("close_long" if cur > 0 and tgt >= 0 else "open_short"), "rebalance to target"
-            n = len(st)
-            out.append({"cid": f"p{plan['id']}-{sym}-{n}", "origin": "rebalance" if n == 0 else "catch_up",
-                        "plan_id": plan["id"], "symbol": sym, "side": side, "qty": qty, "effect": effect, "ref": ref,
-                        "why": f"{why}; target {tgt} sh ({w:+.2%} of ${equity:,.0f}), current {cur}"})
-        return out
+        return rebalance_orders(plan["id"], targets, positions, equity, closes, prior, skip)
 
     def _submit(self, orders: list[dict], now: datetime, next_s: str, clock_open: bool | None, dry_run: bool) -> Step:
         st = Step("orders")

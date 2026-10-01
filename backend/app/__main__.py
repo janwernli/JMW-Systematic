@@ -6,6 +6,7 @@
     python -m app advance [--until YYYY-MM-DD]   advance the virtual portfolio
     python -m app daily [--dry-run] [--trigger T] run the automated daily cycle (Alpaca paper)
     python -m app migrate            apply pending database migrations and exit
+    python -m app paper-config --variant KEY [--replan-now] [--dry-run]   switch the paper strategy
     python -m app backup [--dir D] [--keep N]   consistent SQLite backup (default ~/backups, keep 14)
 """
 
@@ -32,12 +33,18 @@ def main(argv: list[str] | None = None) -> int:
     daily.add_argument("--trigger", default="cli")
     sub.add_parser("sectors", help="(re)classify sectors from SEC EDGAR SIC codes")
     sub.add_parser("migrate", help="apply pending database migrations and exit")
+    pc = sub.add_parser("paper-config", help="switch the paper strategy (model ledger + Alpaca paper) to a variant")
+    pc.add_argument("--variant", required=True, help="neutral_10 | neutral_15 | spy_overlay | ext_130_30")
+    pc.add_argument("--replan-now", action="store_true",
+                    help="rebuild the latest month-end plan with the new config; trades at the next 08:00 ET run")
+    pc.add_argument("--dry-run", action="store_true", help="print the target book and orders; change nothing")
     bak = sub.add_parser("backup", help="consistent SQLite backup (online backup API) with rotation")
     bak.add_argument("--dir", type=Path, default=Path.home() / "backups")
     bak.add_argument("--keep", type=int, default=14)
     args = parser.parse_args(argv)
 
     from .config import get_settings
+    from .ledger.paper import LedgerError
 
     settings = get_settings()
     if args.cmd == "export-openapi":
@@ -68,6 +75,30 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"backup {res['backup']} ({res['bytes'] / 1e6:.1f} MB); keeping {len(res['kept'])}"
               + (f"; removed {', '.join(res['removed'])}" if res["removed"] else ""))
+        return 0
+    if args.cmd == "paper-config":
+        from .logging_setup import configure_logging
+        from .paper_strategy import SwitchError, apply, format_preview, preview
+        from .services import AppContext
+
+        import warnings
+
+        from .strategy.config import ConfigWarning
+
+        warnings.simplefilter("ignore", ConfigWarning)   # printed by format_preview instead
+        configure_logging("WARNING", "text")
+        ctx = AppContext(settings)
+        try:
+            pv = preview(ctx, args.variant, args.replan_now)
+            print(format_preview(pv))
+            if args.dry_run:
+                print("\nDRY RUN: nothing was changed.")
+                return 0
+            res = apply(ctx, args.variant, args.replan_now)
+        except (SwitchError, LedgerError) as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
+        print("\n" + res["message"])
         return 0
     if args.cmd in ("import-data", "advance", "daily", "sectors"):
         from .logging_setup import configure_logging

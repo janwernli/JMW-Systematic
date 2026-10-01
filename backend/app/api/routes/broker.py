@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ...automation import get_setting, plan_decision, rebalance_mode, set_setting
+from ...paper_strategy import active_variant
 from ...services import AppContext
 from ..deps import get_ctx, loads
 
@@ -63,6 +64,7 @@ class BrokerOverview(BaseModel):
     schedule_note: str
     open_orders: int
     rebalance_mode: str
+    paper_variant: dict[str, str | None] = {}
     awaiting_approval: list["BrokerOrder"]
     awaiting_plan: "AwaitingPlan | None" = None
 
@@ -129,7 +131,7 @@ def overview(ctx: AppContext = Depends(get_ctx)):
     port = ctx.ledger.active()
     if port:
         plan = ctx.db.query_one("SELECT signal_set_id FROM rebalance_plans WHERE portfolio_id=? AND status IN "
-                                "('applied','executed') ORDER BY signal_session DESC LIMIT 1", (port["id"],))
+                                "('applied','executed') ORDER BY signal_session DESC, id DESC LIMIT 1", (port["id"],))
         if plan and plan["signal_set_id"]:
             model_w = {r["symbol"]: r["target_weight"] for r in ctx.db.query(
                 "SELECT symbol, target_weight FROM signal_rows WHERE set_id=? AND selected=1", (plan["signal_set_id"],))}
@@ -176,6 +178,7 @@ def overview(ctx: AppContext = Depends(get_ctx)):
         "open_orders": ctx.db.scalar("SELECT COUNT(*) FROM broker_orders WHERE status IN ('submitted','new','accepted',"
                                      "'pending_new','partially_filled','held')") or 0,
         "rebalance_mode": rebalance_mode(ctx.db),
+        "paper_variant": active_variant(ctx),
         "awaiting_approval": waiting,
         "awaiting_plan": _awaiting_plan(ctx, waiting),
     }

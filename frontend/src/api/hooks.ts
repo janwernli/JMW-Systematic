@@ -257,3 +257,26 @@ export function useLaunchVariantStudy() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["variants"] }),
   });
 }
+
+// ---------------------------------------------------------------- paper strategy switch
+export const usePaperStrategy = () =>
+  useQuery({ queryKey: ["paperStrategy"], queryFn: () => api.get<S["ActiveVariant"]>("/paper/strategy") });
+
+export const useSwitchPreview = () =>
+  useMutation({
+    mutationFn: (body: { variant: string; replan_now: boolean }) => api.post<S["SwitchPreview"]>("/paper/strategy/preview", body),
+    onError,
+  });
+
+export function useSwitchApply() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { variant: string; replan_now: boolean; expected_orders: number }) =>
+      api.post<S["SwitchResult"]>("/paper/strategy/apply", body),
+    onError,
+    onSuccess: (r) => {
+      notifications.show({ color: "teal", title: "Paper strategy", message: r.message, autoClose: 12_000 });
+      qc.invalidateQueries();
+    },
+  });
+}

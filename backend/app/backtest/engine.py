@@ -38,6 +38,7 @@ from ..strategy.execution import (
     cash_interest,
     cover_shorts,
     debit_interest,
+    max_debit_fraction,
     delisting_cashouts,
     execute_rebalance,
     exposures,
@@ -58,16 +59,6 @@ MARGIN = {
     "short_maint_min_per_share": 5.0,  # ... but at least $5 per share
     "long_maint_pct": 0.25,           # long maintenance (FINRA 4210 minimum)
 }
-
-
-DEBIT_BUFFER = 0.01   # extra margin loan (fraction of NAV) for slippage and whole-share rounding
-
-
-def max_debit_fraction(targets: dict[str, float]) -> float:
-    """Margin loan the target book needs: longs beyond NAV + short proceeds = net target - 100% (+ buffer).
-    0 for books with net exposure <= 100% - 1% (the market-neutral defaults stay fully self-financed)."""
-    need = sum(targets.values()) - 1.0
-    return need + DEBIT_BUFFER if need > -DEBIT_BUFFER else 0.0
 
 
 def margin_requirement(panel: Panel, t: int, shares: dict[str, int]) -> tuple[float, float]:

@@ -1,0 +1,32 @@
+# Backend test suite on every push / pull request. Uses constructed fixture data only (no keys, no market
+# data in the repo): the spy_overlay sanity backtest runs on the fixture here and on the real stored data locally.
+name: Backend tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install
+        working-directory: backend
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Test
+        working-directory: backend
+        run: python -m pytest -q -rs

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link as RouterLink } from "react-router";
 import { Alert, Badge, Button, Group, Modal, SegmentedControl, Stack, Switch, Text, Tooltip } from "@mantine/core";
 import { IconPlayerPlay, IconRobot, IconTestPipe } from "@tabler/icons-react";
 import { useAutomationMutations, useAutomationRuns, useBrokerOrders, useBrokerOverview } from "../api/hooks";
@@ -33,7 +34,13 @@ export function Trading() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Alpaca Paper Trading</h1>
+          <Group gap={10} align="center">
+            <h1 className="page-title">Alpaca Paper Trading</h1>
+            <Tooltip label="The strategy the model portfolio (and so this account) follows. Change it on the Strategy Variants page.">
+              <Badge component={RouterLink} to="/variants" color="teal" variant="light" size="lg" style={{ cursor: "pointer" }}
+                leftSection={<IconRobot size={12} />}>Strategy: {data.paper_variant?.name ?? "—"}</Badge>
+            </Tooltip>
+          </Group>
           <div className="page-sub">
             Source of truth for the traded portfolio: your Alpaca PAPER account (no real money). Last sync {fmtTs(data.synced_at)}.
           </div>

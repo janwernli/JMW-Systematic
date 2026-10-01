@@ -80,7 +80,10 @@ class StrategyConfig(BaseModel):
         "vol_target", description="vol_target: gross set by target_vol within the side limits; fixed: fixed_long_gross / "
                                   "fixed_short_gross (e.g. 130/30), no vol target")
     fixed_long_gross: float = Field(1.30, ge=0, le=3, description="Long book gross when sizing = fixed, fraction of NAV")
-    fixed_short_gross: float = Field(0.30, ge=0, le=3, description="Short book gross when sizing = fixed, fraction of NAV")
+    fixed_short_gross: float = Field(
+        0.30, ge=0, le=3, description="Short book gross when sizing = fixed and beta_neutral is off. With beta_neutral on, "
+                                      "the short book is sized for overlay beta neutrality (long x beta_L / beta_S), "
+                                      "capped at max_side_gross")
     core_beta: float = Field(
         0.0, ge=0, le=1, description="SPY core: hold core_beta x NAV in the benchmark ETF under the long/short overlay. "
                                      "Rebalanced monthly; exempt from beta/sector neutrality; counts toward max_total_gross")
@@ -148,14 +151,18 @@ class StrategyConfig(BaseModel):
         """Valid-but-self-limiting settings, surfaced in the UI, plan checks and backtest warnings."""
         out = []
         if self.sizing == "fixed":
+            short_max = self.max_side_gross if self.beta_neutral else self.fixed_short_gross
             for side, gross, cap in (("long", self.fixed_long_gross, self.max_long_weight),
-                                     ("short", self.fixed_short_gross, self.max_short_weight)):
+                                     ("short", short_max, self.max_short_weight)):
                 if self.min_names_per_side * cap < gross - 1e-12:
                     out.append(f"Per-name {side} cap limits the fixed {side} book: {self.min_names_per_side} x {cap:.2%} = "
                                f"{self.min_names_per_side * cap:.1%} < {gross:.0%} unless more names qualify.")
-            if self.core_beta + self.fixed_long_gross + self.fixed_short_gross > self.max_total_gross + 1e-12:
-                out.append(f"Fixed books ({self.fixed_long_gross:.0%}/{self.fixed_short_gross:.0%}) plus core exceed "
-                           f"max_total_gross {self.max_total_gross:.0%}; both sides are scaled down.")
+            worst = self.core_beta + self.fixed_long_gross + short_max
+            if worst > self.max_total_gross + 1e-12:
+                out.append(f"Total gross could exceed {self.max_total_gross:.0%}: core {self.core_beta:.0%} + long "
+                           f"{self.fixed_long_gross:.0%} + short up to {short_max:.0%} = {worst:.0%}. When it would, both "
+                           f"overlay sides are scaled down together (beta ratio kept) to stay within {self.max_total_gross:.0%}; "
+                           "between rebalances, price moves can still push gross above it.")
             if self.sector_neutral and abs(self.fixed_long_gross - self.fixed_short_gross) > self.max_sector_net:
                 out.append("Sector neutrality cannot hold for a net-long fixed book (sector nets sum to the book's net "
                            "exposure); the sector QP will cut gross heavily or fail. Turn sector_neutral off.")

@@ -19,6 +19,7 @@ def _summary(p: dict) -> dict:
     ex = loads(p.get("execution_json"), None)
     return {
         "id": p["id"], "signal_session": p["signal_session"], "fill_session": p["fill_session"], "status": p["status"],
+        "kind": p["kind"] if "kind" in p.keys() else "month_end",
         "block_reason": p["block_reason"], "created_at": p["created_at"], "decided_at": p["decided_at"],
         "executed_at": p["executed_at"], "selected_count": est.get("selected_count", 0),
         "est_turnover": est.get("est_turnover"), "realized_turnover": ex.get("turnover") if ex else None,
@@ -85,7 +86,7 @@ def plans(ctx: AppContext = Depends(get_ctx)):
     if not port:
         return []
     return [_summary(p) for p in ctx.db.query(
-        "SELECT * FROM rebalance_plans WHERE portfolio_id=? ORDER BY signal_session DESC", (port["id"],))]
+        "SELECT * FROM rebalance_plans WHERE portfolio_id=? ORDER BY signal_session DESC, id DESC", (port["id"],))]
 
 
 @router.get("/current", response_model=PlanDetail | None)
@@ -94,7 +95,8 @@ def current(ctx: AppContext = Depends(get_ctx)):
     if not port:
         return None
     plan = ctx.ledger.pending_plan(port["id"]) or ctx.db.query_one(
-        "SELECT * FROM rebalance_plans WHERE portfolio_id=? ORDER BY signal_session DESC LIMIT 1", (port["id"],))
+        "SELECT * FROM rebalance_plans WHERE portfolio_id=? AND status <> 'superseded' ORDER BY signal_session DESC, "
+        "id DESC LIMIT 1", (port["id"],))
     return _detail(ctx, plan) if plan else None
 
 

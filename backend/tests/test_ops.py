@@ -98,7 +98,7 @@ def test_daily_cycle_sends_a_summary(tmp_path, monkeypatch):
     res = DailyCycle(ctx, fb, now_fn=lambda: now).run(trigger="schedule")
     assert len(sent) == 1 and sent[0][0]["run_id"] == res["run_id"] and sent[0][1] == "schedule"
     sync = next(s for s in res["steps"] if s["name"] == "sync")
-    assert sync["data"] == {"equity": 100_000.0, "longs": 0, "shorts": 0}
+    assert sync["data"] == {"equity": 100_000.0, "longs": 0, "shorts": 0, "margin_flags": []}
 
 
 # ---------------------------------------------------------------- backup

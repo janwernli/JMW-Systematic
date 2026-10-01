@@ -21,7 +21,7 @@ def _nan(v):
 
 def latest_plan(ctx: AppContext, pid: int) -> dict | None:
     return ctx.db.query_one("SELECT * FROM rebalance_plans WHERE portfolio_id=? AND status IN "
-                            "('proposed','applied','executed') ORDER BY signal_session DESC LIMIT 1", (pid,))
+                            "('proposed','applied','executed') ORDER BY signal_session DESC, id DESC LIMIT 1", (pid,))
 
 
 @router.get("", response_model=UniverseResponse)

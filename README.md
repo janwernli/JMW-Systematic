@@ -235,13 +235,15 @@ A full-sample t-stat near 2, entirely from the second half, on a survivorship-bi
 
 ### Strategy variants
 
-The **Strategy Variants** page (`/variants`) runs four **pre-defined** variants on the same data version and period and shows them side by side. They are fixed structural alternatives, defined in `backend/app/backtest/variants.py` before being run; nothing is tuned to the backtest. **Neutral 10% stays the paper default** until you explicitly choose another.
+The **Strategy Variants** page (`/variants`) runs four **pre-defined** variants on the same data version and period and shows them side by side. They are fixed structural alternatives, defined in `backend/app/backtest/variants.py` before being run; nothing is tuned to the backtest.
+
+**Paper trading uses SPY + overlay** (switched on 2026-10-01; see [Switching the paper strategy](#switching-the-paper-strategy)). The other variants stay available for research. `StrategyConfig()` defaults are still Neutral 10%.
 
 | Variant | Definition |
 |---|---|
 | **Neutral 10%** | The current defaults. |
 | **Neutral 15%** | `target_vol` 0.15, `max_side_gross` 1.0, `max_total_gross` 2.0 (Alpaca Reg T limit). |
-| **SPY + overlay** | `core_beta` 1.0: 100% of NAV in SPY, rebalanced monthly with the rest, plus the market-neutral overlay at `target_vol` 0.08. Beta and sector neutrality apply to the overlay only. SPY + long + short gross ≤ 2.0 (the overlay's cap is `max_total_gross − core_beta`). |
+| **SPY + overlay** (paper) | `core_beta` 1.0: 100% of NAV in SPY, rebalanced monthly with the rest. Plus an overlay from the same composite signal: deciles, buffer, inverse-vol weights, sector-neutral.<br>Overlay sizing is **fixed** (`sizing` fixed):<br>• long book 30% of NAV (`fixed_long_gross`);<br>• short book sized for overlay beta neutrality, long × β_L / β_S ≈ 30%, capped at 40% (`max_side_gross`).<br>`max_total_gross` 1.6: if core + long + short would exceed it, both overlay sides are scaled down together, which keeps the beta ratio. The crash guard scales the overlay short book. The stop-loss (+50%), the $10 short floor, the HTB screen and the easy-to-borrow check are unchanged. Beta and sector neutrality apply to the overlay only. |
 | **130/30** | `sizing` = fixed: long book 130%, short book 30%, same signal, `beta_neutral` off, no vol target, gross cap 1.6. |
 
 The 130/30 variant needs two things that follow from its definition:
@@ -277,26 +279,73 @@ The flagged days are listed per run.
 
 Two charts go with the table: equity curves with SPY (log scale), and drawdowns. Sharpe and Sortino use the same excess return as the alpha test (RF charged on all capital except idle cash).
 
-**Results on the current Alpaca data (2017-01-03 → 2026-09-29).** These are illustrations only. The universe is survivorship-biased, which flatters **long** exposure most, so the net-long variants are the most inflated.
+**Results on the current Alpaca data (2017-01-03 → 2026-09-29, comparison #2).** These are illustrations only. The universe is survivorship-biased, which flatters **long** exposure most, so the net-long variants are the most inflated.
 
 | | Neutral 10% | Neutral 15% | SPY + overlay | 130/30 |
 |---|---|---|---|---|
-| CAGR / vol | 4.1% / 8.3% | 5.0% / 10.3% | 19.3% / 19.0% | 23.5% / 21.7% |
-| Sharpe / Sortino | 0.54 / 0.73 | 0.53 / 0.72 | 0.90 / 1.28 | 0.98 / 1.37 |
+| CAGR / vol | 4.1% / 8.3% | 5.0% / 10.3% | 16.7% / 18.8% | 23.5% / 21.7% |
+| Sharpe / Sortino | 0.54 / 0.73 | 0.53 / 0.72 | 0.79 / 1.11 | 0.98 / 1.37 |
 | Max drawdown | −14.1% (2019-08 → 2021-07) | −19.1% | −33.4% (Mar 2020) | −35.0% (Mar 2020) |
-| Worst month | −4.4% | −6.4% | −11.1% | −13.8% |
-| Beta / correlation to SPY | 0.00 / 0.01 | 0.02 / 0.03 | 1.00 / 0.94 | 0.97 / 0.80 |
-| Alpha (FF5 + Mom), t | +3.2%, 2.09 | +3.5%, 1.64 | +2.7%, 2.16 | +6.8%, 3.32 |
-| Turnover / total costs | 3.4× / $9,994 | 4.0× / $11,837 | 3.3× / $22,610 | 3.5× / $23,222 |
-| Days gross > 2× / maintenance breaches | 0 / 0 | 0 / 0 | 57 / 0 | 0 / 0 |
-| 1st half: CAGR, alpha (t) | −1.8%, −2.0% (−1.3) | −2.8%, −3.3% (−1.6) | +18.2%, +0.3% (0.2) | +21.4%, +0.8% (0.4) |
-| 2nd half: CAGR, alpha (t) | +10.4%, +8.5% (4.7) | +13.4%, +10.2% (3.3) | +20.3%, +5.6% (3.1) | +25.5%, +11.3% (3.9) |
+| Worst month | −4.4% | −6.4% | −12.4% | −13.8% |
+| Beta / correlation to SPY | 0.00 / 0.01 | 0.02 / 0.03 | 1.01 / 0.96 | 0.97 / 0.80 |
+| Alpha (FF5 + Mom), t | +3.2%, 2.09 | +3.5%, 1.64 | +0.4%, 0.43 | +6.8%, 3.32 |
+| Turnover / total costs | 3.4× / $9,994 | 4.0× / $11,837 | 3.6× / $18,787 | 3.5× / $23,222 |
+| Days gross > 2× / maintenance breaches | 0 / 0 | 0 / 0 | 0 / 0 (max 1.64×) | 0 / 0 |
+| 1st half: CAGR, alpha (t) | −1.8%, −2.0% (−1.3) | −2.8%, −3.3% (−1.6) | +16.5%, −2.3% (−2.7) | +21.4%, +0.8% (0.4) |
+| 2nd half: CAGR, alpha (t) | +10.4%, +8.5% (4.7) | +13.4%, +10.2% (3.3) | +16.9%, +3.2% (2.9) | +25.5%, +11.3% (3.9) |
 
 SPY itself returned about 15% a year over the same period.
 
 - **Every variant's alpha comes from the second half.** None is significant in the first half.
 - **The two net-long variants mostly carry market beta.** Their extra return over the neutral books is mainly SPY's return.
-- **SPY + overlay breached the 2× gross limit on 57 days.** This is drift between the monthly rebalances; the maximum was 2.04×.
+- **SPY + overlay (the paper strategy) has a full-sample alpha of essentially zero.** Its 30%/30% overlay is small next to the 100% SPY core, and its first-half alpha is significantly negative. It never breached a margin limit; it borrowed a little on margin ($1,729 interest over the run).
+- **Comparison #1** used an earlier SPY + overlay definition: an 8% vol-target overlay, 200% gross cap, 57 days above 2×. It is kept in the comparison history.
+
+### Switching the paper strategy
+
+The model portfolio (internal ledger) and the Alpaca paper account always follow the **same** plans. The Alpaca account trades whatever the model ledger's latest plan targets, so switching the strategy is a config change on the active model portfolio:
+
+- a new config version, logged under Ledger & Diagnostics;
+- an ntfy message, "Paper strategy changed to …".
+
+**From the dashboard:** go to *Strategy Variants*, click **Use for paper trading…**, review the settings, the target book and the full order list, then confirm. The Alpaca Paper page shows the active strategy at the top.
+
+**From the command line (on the server):**
+
+```bash
+# Azure VM (systemd install)
+cd ~/JMW-Systematic/backend
+.venv/bin/python -m app paper-config --variant spy_overlay --replan-now --dry-run   # look first: changes nothing
+.venv/bin/python -m app paper-config --variant spy_overlay --replan-now             # switch
+systemctl list-timers 'jmw-daily*'                                                   # next run (08:00 / 17:30 ET)
+
+# Windows PC
+cd "C:\Coding\JMW Trading Strategy\backend"
+.venv\Scripts\python.exe -m app paper-config --variant spy_overlay --replan-now --dry-run
+.venv\Scripts\python.exe -m app paper-config --variant spy_overlay --replan-now
+```
+
+Run it where the scheduler runs, i.e. against the database that trades: on the VM if the VM runs `jmw-daily.timer`.
+
+Variants: `neutral_10`, `neutral_15`, `spy_overlay`, `ext_130_30`.
+
+- **`--dry-run`** prints the config changes, warnings, the target book and the full order list, and changes nothing.
+  - The target book shows the SPY weight, the number of longs and shorts, overlay long and short gross, total gross, net exposure and the estimated overlay beta.
+  - The orders are computed against the live Alpaca paper positions and equity (read-only), or the last sync.
+- **Without `--replan-now`**, the new config applies from the next month-end plan.
+- **`--replan-now`** makes the switch happen within one trading day.
+  - It rebuilds the plan of the latest month-end signal the ledger has processed. The **ranking is the month-end close's**; only books and sizing change. The plan is priced at the latest close with current holdings and applied to the model ledger, filling at the next open.
+  - Any unexecuted plan is **superseded**, and its unsent Alpaca drafts too.
+  - At the next **08:00 ET** run, the daily cycle reconciles the Alpaca positions to the new plan: names not in the new target are sold or covered, SPY is bought, and the overlay is rebalanced.
+  - **Approve mode** still applies: the new plan waits for **Approve** on the Trading page. In **auto** mode it is sent.
+  - If the ledger has not processed the latest month-end yet (for example right after a month-end close), no replan is needed: the next daily run forms that month-end plan with the new config.
+  - It is **refused** while rebalance orders are still working at Alpaca. Wait for the fills, or cancel them in Alpaca, then switch.
+- The model ledger takes the same margin loans as the backtest: RF + `margin_debit_spread` on a negative cash balance. That keeps the theoretical track, the backtest and the Alpaca account consistent.
+
+**Margin checks on the real account.** After every sync the daily cycle compares the Alpaca account with the limits:
+
+- gross above the strategy cap (+5% drift) → **warning**;
+- gross above 2× or equity below Alpaca's maintenance margin → **error**, with an ntfy alert.
 
 ## 8. Strategy rules
 
@@ -421,7 +470,7 @@ npm test              # backend pytest suite + frontend type-check
 npm run test:backend
 ```
 
-There are 170 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
+There are 180 backend tests, built on constructed datasets with hand-checkable results. Beyond the earlier coverage (lookbacks, no look-ahead, calendar, splits/dividends, whole-share cash, costs, restart persistence, model ledger = backtest), they cover:
 
 - **Composite signal:** winsorizing, the FIP arithmetic, residual momentum rewarding recent idiosyncratic drift but not beta, sector demeaning, and ranking by composite vs 12–1.
 - **Books and sizing:** the hard-to-borrow screen, the sector-neutral QP (limits, gross, beta, caps, and the reduced-gross fallback), the capacity warning, and loading of legacy configs.
@@ -432,13 +481,22 @@ There are 170 backend tests, built on constructed datasets with hand-checkable r
 - **Follow-ups:** ACT/360 cash interest, the model ledger matching the backtest with interest on, the alpha regression matching the cash treatment, Norgate GICS sectors (including delisted symbols such as `ENRNQ-200411` all the way into the panel, and legacy names), SEC not being used for Norgate, and final sector nets after the crash guard.
 - **Approval mode:** `approve` is the default (also for existing databases, via migration 0005). Rebalances are held while stop-losses are sent. Approving a plan sends every order and later catch-ups. A changed order list and a second decision are refused. A declined plan is never sent, even in `auto`. Stale drafts are superseded.
 - **Strategy variants:**
-  - The defaults are unchanged, and Neutral 10% stays the paper default. The variant definitions match the spec.
+  - The `StrategyConfig` defaults are unchanged (= Neutral 10%). The variant definitions match the spec.
   - The SPY core is bought first, is exempt from beta and sector neutrality, and counts toward the gross cap; the overlay is identical with and without it.
   - Fixed 130/30 sizing, including scaling to the gross cap; equal dollar sides without beta neutrality.
   - Margin loans only when the book needs them (exact cash arithmetic), ACT/360 debit interest, and no borrowing for neutral books.
   - The margin requirement rules and the engine's gross/maintenance flags.
   - The idle-cash RF basis, which matches r and r − RF at the extremes; the report's Sharpe, drawdown dates, costs and halves.
   - End to end: the four variants run through the API on an identical period.
+- **Paper strategy switch:**
+  - A new config version, the event log, the ntfy message and idempotency.
+  - The dry run changes nothing: every table is compared before and after the CLI dry run.
+  - Replan-now from a neutral book to SPY + overlay: the old plan is superseded and the month-end ranking reused; dropped names are sold or covered, SPY is bought, and only the new plan trades.
+  - Approve vs auto mode; a refusal while orders are working; no replan when the month-end has not been processed yet.
+  - The model ledger equals the backtest to the cent with a SPY core and a margin loan.
+  - Account margin flags.
+  - A spy_overlay sanity backtest (no margin flags) on the fixture, and on the locally stored real data when present.
+- **CI:** `.github/workflows/tests.yml` runs the whole backend suite on every push. The real-data test is skipped there, because no market data is in the repo.
 - **VM operations:** ntfy messages (off without a topic; summary; stale-data, error and approval alerts; never raises), consistent SQLite backups with 14-day rotation while the database is open, the `migrate` and `backup` commands, and the deploy files (localhost-only single-worker unit, weekday New York timers, safe `.env.example` defaults).
 
 ## 14. Git and GitHub
@@ -479,6 +537,7 @@ Strategy parameters that the variants use (StrategyConfig; defaults = Neutral 10
 | `beta_neutral` | true | Short gross = long gross × β_L / β_S; off = equal dollar gross per side |
 | `sizing` | `vol_target` | `vol_target` or `fixed` (`fixed_long_gross` / `fixed_short_gross`, default 1.30 / 0.30) |
 | `margin_debit_spread` | 0.025 | ASSUMED margin-loan rate over RF, ACT/360 (only books with net target > 100% borrow) |
+| `fixed_long_gross` / `fixed_short_gross` | 1.30 / 0.30 | Fixed sizing. With `beta_neutral` on, the short book is sized for overlay beta neutrality instead, capped at `max_side_gross` (SPY + overlay: 0.30 long, short ≤ 0.40) |
 
 ## 16. Troubleshooting
 

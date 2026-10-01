@@ -16,6 +16,7 @@ from ...backtest.variants import VARIANT_BY_KEY, VARIANTS
 from ...db import log_event, utcnow
 from ...services import AppContext
 from ...strategy.config import StrategyConfig
+from ...paper_strategy import active_variant
 from ..deps import get_ctx, loads
 
 log = logging.getLogger(__name__)
@@ -184,7 +185,7 @@ def overview(ctx: AppContext = Depends(get_ctx)):
                          "config": cfg, "config_warnings": cfg.config_warnings()})
     studies = [_study(ctx, r) for r in ctx.db.query("SELECT * FROM variant_studies ORDER BY id DESC LIMIT 20")]
     return {"variants": variants, "studies": studies, "default_start": earliest_start(panel, StrategyConfig()),
-            "default_end": panel.sessions[-1], "paper_default": VARIANTS[0].name}
+            "default_end": panel.sessions[-1], "paper_default": active_variant(ctx)["name"]}
 
 
 @router.post("/studies", response_model=VariantStudy)

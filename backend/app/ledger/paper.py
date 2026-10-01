@@ -31,6 +31,8 @@ from ..data.panel import Panel
 from ..db import Database, log_event, utcnow
 from ..strategy.config import StrategyConfig
 from ..strategy.execution import (
+    debit_interest,
+    max_debit_fraction,
     CostModel,
     apply_corporate_actions,
     borrow_fee,
@@ -106,6 +108,14 @@ def _int_or_none(v) -> int | None:
         return None if v is None or v is pd.NA or np.isnan(v) else int(v)
     except TypeError:
         return int(v)
+
+
+def execution_order(rows) -> list[str]:
+    """Execution priority for stored signal rows: SPY core, longs by rank (best first), shorts (worst first)."""
+    core = [r["symbol"] for r in rows if r["side"] == "core"]
+    longs = sorted((r for r in rows if r["target_weight"] > 0 and r["side"] != "core"), key=lambda r: r["rank"])
+    shorts = sorted((r for r in rows if r["target_weight"] < 0), key=lambda r: -r["rank"])
+    return core + [r["symbol"] for r in longs] + [r["symbol"] for r in shorts]
 
 
 @dataclass
@@ -243,6 +253,81 @@ class PaperLedger:
             log_event(conn, "warning", "rebalance", f"Plan #{plan_id} skipped: {note or 'by user'}", portfolio_id=p["id"])
         return self.db.query_one("SELECT * FROM rebalance_plans WHERE id=?", (plan_id,))
 
+    def latest_month_end(self, upto: str) -> str | None:
+        """Last month-end session on or before `upto` that has stored data."""
+        panel = self.panel_fn()
+        ends = [x for x in self.cal.month_end_sessions(panel.sessions[0], upto) if x in panel.sess_index]
+        return ends[-1] if ends else None
+
+    def replan(self, note: str = "strategy switch") -> dict:
+        """Rebuild the plan of the latest month-end the ledger has processed, using the ACTIVE config.
+
+        Reuses the month-end signal session (the ranking is not recomputed mid-month: the signal is the month-end
+        close's), re-runs book construction and sizing with the new config, and prices the plan at the ledger's
+        current session with current holdings. The new plan (kind 'replan') is applied immediately and fills at
+        the next session's open; any unexecuted plan is superseded. Returns the new plan row.
+        """
+        p = self.require_active()
+        pid = p["id"]
+        panel = self.panel_fn()
+        as_of = p["as_of_session"]
+        s = self.latest_month_end(as_of)
+        if s is None:
+            raise LedgerError("No month-end signal session on or before the ledger's as-of session.", "no_signal")
+        if self.cal.next_session(as_of) is None:
+            raise LedgerError("No next session in the calendar for the fill.", "no_session")
+        cfg = self.config_of(p)
+        current = self.db.query_one(
+            "SELECT * FROM rebalance_plans WHERE portfolio_id=? AND signal_session=? AND status IN "
+            "('proposed','applied','executed') ORDER BY id DESC LIMIT 1", (pid, s))
+        if current and current["config_id"] == p["config_id"]:
+            raise LedgerError(f"Plan #{current['id']} for the {s} signal already uses the active config; nothing to "
+                              "replan.", "current")
+        dv = self.data_version_fn()
+        with self.db.transaction() as conn:
+            open_plans = [r["id"] for r in conn.execute(
+                "SELECT id FROM rebalance_plans WHERE portfolio_id=? AND status IN ('proposed','applied')", (pid,))]
+            port = conn.execute("SELECT * FROM paper_portfolios WHERE id=?", (pid,)).fetchone()
+            shares = self.positions(pid)
+            extra = []
+            if current and current["signal_set_id"]:
+                old = {r["symbol"]: r["rank"] for r in conn.execute(
+                    "SELECT symbol, rank FROM signal_rows WHERE set_id=? AND rank IS NOT NULL", (current["signal_set_id"],))}
+                extra.append({"rule": "Month-end signal reused", "ok": True,
+                              "detail": f"Ranking from the {s} close (plan #{current['id']}); only books and sizing change."})
+            else:
+                old = None
+            plan_id = self._form_plan(conn, panel, pid, panel.sess_index[s], cfg, p["config_id"], shares, port["cash"], dv,
+                                      t_price=panel.sess_index[as_of], kind="replan", replaces=open_plans,
+                                      extra_checks=extra)
+            plan = conn.execute("SELECT * FROM rebalance_plans WHERE id=?", (plan_id,)).fetchone()
+            if old is not None:
+                new = {r["symbol"]: r["rank"] for r in conn.execute(
+                    "SELECT symbol, rank FROM signal_rows WHERE set_id=? AND rank IS NOT NULL", (plan["signal_set_id"],))}
+                if new != old:
+                    log_event(conn, "warning", "rebalance", f"Replan #{plan_id}: ranking differs from plan "
+                              f"#{current['id']} (signal parameters changed with the config)", portfolio_id=pid)
+            if plan["status"] == "blocked":
+                raise LedgerError(f"The replan is blocked: {plan['block_reason']}", "blocked")
+            now = utcnow()
+            for old_id in open_plans:
+                conn.execute("UPDATE rebalance_plans SET status='superseded', decided_at=?, decision_note=? WHERE id=?",
+                             (now, f"Superseded by replan #{plan_id} ({note})", old_id))
+                conn.execute("UPDATE paper_orders SET status='no_trade', status_reason=?, updated_at=? WHERE plan_id=? "
+                             "AND status='pending'", (f"Plan superseded by replan #{plan_id}", now, old_id))
+            conn.execute("UPDATE rebalance_plans SET status='applied', decided_at=?, decision_note=? WHERE id=?",
+                         (now, f"Replan applied ({note})", plan_id))
+            for o in conn.execute("SELECT * FROM plan_orders WHERE plan_id=?", (plan_id,)).fetchall():
+                conn.execute(
+                    "INSERT INTO paper_orders (portfolio_id, plan_id, symbol, intended_side, target_weight, est_shares,"
+                    " fill_session, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (pid, plan_id, o["symbol"], o["side"], o["target_weight"], o["est_shares"], plan["fill_session"],
+                     "pending", now, now))
+            log_event(conn, "warning", "rebalance", f"Replan #{plan_id} from the {s} signal applied; fills at the open of "
+                      f"{plan['fill_session']}" + (f"; superseded plan(s) {open_plans}" if open_plans else ""),
+                      portfolio_id=pid, session=as_of)
+        return self.db.query_one("SELECT * FROM rebalance_plans WHERE id=?", (plan_id,))
+
     # ------------------------------------------------------------------ advancing
     def advance(self, until: str | None = None, max_sessions: int | None = None, auto_apply: bool = False) -> AdvanceResult:
         """Process sessions after the portfolio's as-of session.
@@ -351,6 +436,20 @@ class PaperLedger:
                 if interest:
                     cash = r2(cash + interest)
                     self._cash(conn, pid, s, "interest", None, interest, cash, f"RF {rate:.2%}/yr on cash (ACT/360)")
+            if cash < 0:   # margin loan (SPY core / net-long books): RF + spread, ACT/360, as the backtest engine
+                base = 0.0
+                try:
+                    base = self.rf_fn().annual(s) if self.rf_fn is not None else 0.0
+                except Exception as e:  # noqa: BLE001 - charge the spread only, and say so
+                    log_event(conn, "warning", "paper", f"RF unavailable ({e}); margin interest at the spread only",
+                              portfolio_id=pid, session=s)
+                rate = base + cfg.margin_debit_spread
+                debit = debit_interest(panel, t, cash, rate)
+                if debit:
+                    cash = r2(cash - debit)
+                    cum_costs = r2(cum_costs + debit)
+                    self._cash(conn, pid, s, "interest", None, -debit, cash,
+                               f"margin loan interest {rate:.2%}/yr on ${-cash:,.2f} debit (ACT/360)")
             fee, short_value = borrow_fee(panel, t, shares, cfg.borrow_fee_annual)
             if fee:
                 cash = r2(cash - fee)
@@ -443,16 +542,14 @@ class PaperLedger:
     def _execute_plan(self, conn, panel: Panel, pid: int, t: int, plan, cfg: StrategyConfig,
                       shares: dict[str, int], basis: dict[str, float], cash: float, cum_costs: float):
         s = panel.sessions[t]
-        sig_rows = conn.execute("SELECT symbol, rank, target_weight FROM signal_rows WHERE set_id=? AND selected=1",
+        sig_rows = conn.execute("SELECT symbol, rank, target_weight, side FROM signal_rows WHERE set_id=? AND selected=1",
                                 (plan["signal_set_id"],)).fetchall()
         targets = {r["symbol"]: r["target_weight"] for r in sig_rows}
-        longs = sorted((r for r in sig_rows if r["target_weight"] > 0), key=lambda r: r["rank"])
-        shorts = sorted((r for r in sig_rows if r["target_weight"] < 0), key=lambda r: -r["rank"])
-        rank_order = [r["symbol"] for r in longs] + [r["symbol"] for r in shorts]
+        rank_order = execution_order(sig_rows)
         symbols = set(shares) | set(targets)
         costs = CostModel(cfg.slippage_bps, cfg.commission_per_order, cfg.commission_bps)
         ex = execute_rebalance(shares, cash, targets, rank_order, open_prices(panel, t, symbols),
-                               preopen_marks(panel, t, symbols), costs)
+                               preopen_marks(panel, t, symbols), costs, max_debit_frac=max_debit_fraction(targets))
         now = utcnow()
         orders = {r["symbol"]: r for r in conn.execute("SELECT * FROM paper_orders WHERE plan_id=?", (plan["id"],))}
         for f in ex.fills:
@@ -493,14 +590,23 @@ class PaperLedger:
         return cash, cum_costs, shares
 
     def _form_plan(self, conn, panel: Panel, pid: int, t: int, cfg: StrategyConfig, cfg_id: int,
-                   shares: dict[str, int], cash: float, dv: str) -> int:
+                   shares: dict[str, int], cash: float, dv: str, t_price: int | None = None, kind: str = "month_end",
+                   replaces: list[int] | None = None, extra_checks: list[dict] | None = None) -> int:
+        """Form a plan from the month-end signal at session t.
+
+        Month-end plans (kind 'month_end') are priced at t and fill at the next session. A replan (kind 'replan',
+        after a strategy switch) reuses the month-end signal session t but is estimated at the current session
+        t_price with current holdings and fills at the session after t_price.
+        """
         s = panel.sessions[t]
-        fill = self.cal.next_session(s)
+        tp = t if t_price is None else t_price
+        price_s = panel.sessions[tp]
+        fill = self.cal.next_session(price_s)
         last_signal = conn.execute("SELECT MAX(signal_session) FROM rebalance_plans WHERE portfolio_id=? AND "
                                    "signal_session<?", (pid, s)).fetchone()[0] or ""
         stopped = {r["symbol"] for r in conn.execute(
             "SELECT DISTINCT symbol FROM paper_orders WHERE portfolio_id=? AND origin='stop_loss' AND trigger_session>? "
-            "AND trigger_session<=?", (pid, last_signal, s))}
+            "AND trigger_session<=?", (pid, last_signal, price_s))}
         held_long = {x for x, q in shares.items() if q > 0}
         held_short = {x for x, q in shares.items() if q < 0 and x not in stopped}
         sig = compute_signals(panel, t, cfg, held_long, held_short, stopped)
@@ -508,14 +614,16 @@ class PaperLedger:
         targets = sig.target_weights()
         symbols = set(shares) | set(targets)
         costs = CostModel(cfg.slippage_bps, cfg.commission_per_order, cfg.commission_bps)
-        # Estimate with the (frozen) signal-session closes; real sizing happens at the fill-session open.
-        est = execute_rebalance(shares, cash, targets, list(sig.selected["symbol"]), close_prices(panel, t, symbols),
-                                marks_at(panel, t, symbols), costs)
+        # Estimate with closes (signal session, or today's for a replan); real sizing happens at the fill-session open.
+        debit = max_debit_fraction(targets)
+        est = execute_rebalance(shares, cash, targets, list(sig.selected["symbol"]), close_prices(panel, tp, symbols),
+                                marks_at(panel, tp, symbols), costs, max_debit_frac=debit)
+        t = tp   # valuation / estimate session below
         nav = est.nav_at_open
         d = sig.diagnostics
         longs = {k: v for k, v in targets.items() if v > 0}
         shorts = {k: v for k, v in targets.items() if v < 0}
-        checks = [
+        checks = list(extra_checks or []) + [
             {"rule": "Signal frozen before fills", "ok": True,
              "detail": f"Signals use data through the close of {s}; fills at the open of {fill}."},
             {"rule": "Data coverage at signal session", "ok": sig.coverage >= cfg.min_session_coverage,
@@ -542,23 +650,35 @@ class PaperLedger:
                            + ("; crash guard deliberately leaves the book net long." if d.get("crash_guard", {}).get("active") else ".")},
                 {"rule": "Short price floor", "ok": all((close.get(x) or 0) > cfg.short_min_price for x in shorts),
                  "detail": f"All {len(shorts)} shorts close above ${cfg.short_min_price:g}."},
-                {"rule": "Volatility target", "ok": True,
-                 "detail": f"Ex-ante vol {d.get('ex_ante_vol', 0):.1%} vs target {cfg.target_vol:.0%}"
+                {"rule": "Volatility target" if cfg.sizing == "vol_target" else "Fixed sizing", "ok": True,
+                 "detail": (f"Ex-ante vol {d.get('ex_ante_vol', 0):.1%} vs target {cfg.target_vol:.0%}"
+                            if cfg.sizing == "vol_target" else
+                            f"Overlay long {d.get('long_gross', 0):.1%} / short {d.get('short_gross', 0):.1%} "
+                            f"(ex-ante vol {d.get('ex_ante_vol', 0):.1%})"
+                            + (f"; SPY core {d['core']['weight']:.0%}" if d.get("core", {}).get("weight") else ""))
                            + (f" ({'; '.join(d['binding'])})" if d.get("binding") else "") + "."},
                 {"rule": "Crash guard", "ok": True,
                  "detail": ("ON: short book scaled" if d.get("crash_guard", {}).get("active") else "Off") +
                            f" (market 24m return {_pct(d.get('crash_guard', {}).get('market_return'))}, "
                            f"6m vol {_pct(d.get('crash_guard', {}).get('market_vol'))}; threshold "
                            f"{cfg.crash_market_vol_threshold:.0%})."},
-                {"rule": "Cash stays positive", "ok": est.cash_after >= 0,
-                 "detail": f"Estimated cash after trading ${est.cash_after:,.2f} (short proceeds held as cash)."},
+                {"rule": "Cash stays positive" if debit == 0 else "Margin loan within plan",
+                 "ok": est.cash_after >= -debit * nav - 0.01,
+                 "detail": (f"Estimated cash after trading ${est.cash_after:,.2f} (short proceeds held as cash)."
+                            if debit == 0 else
+                            f"Estimated cash after trading ${est.cash_after:,.2f}: a margin loan of up to "
+                            f"{debit:.1%} of NAV (longs beyond NAV + short proceeds), charged RF + "
+                            f"{cfg.margin_debit_spread:.1%}.")},
             ]
         status = "blocked" if sig.blocked_reason else "proposed"
         estimate = {
             "nav": nav, "cash_before": est.cash_before, "est_buy_value": est.buy_value, "est_sell_value": est.sell_value,
             "est_slippage": est.slippage_cost, "est_commission": est.commission, "est_turnover": est.turnover,
             "est_cash_after": est.cash_after, "est_positions_after": len(est.shares_after),
-            "price_basis": f"Signal-session close ({s}); actual fills use the {fill} open.",
+            "price_basis": (f"Signal-session close ({s}); actual fills use the {fill} open." if kind == "month_end" else
+                            f"Replan of the {s} month-end signal with the new config, priced at the {price_s} close; "
+                            f"fills at the {fill} open."),
+            "kind": kind, "replaces": replaces or [],
             "universe_count": sig.universe_count, "eligible_count": sig.eligible_count,
             "selected_count": sig.selected_count, "coverage": sig.coverage, "unfilled_estimate": est.unfilled,
             "signal": cfg.signal, "long_count": len(longs), "short_count": len(shorts),
@@ -567,9 +687,10 @@ class PaperLedger:
         }
         cur = conn.execute(
             "INSERT INTO rebalance_plans (portfolio_id, signal_session, fill_session, signal_set_id, config_id, data_version,"
-            " status, block_reason, estimate_json, checks_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " status, block_reason, estimate_json, checks_json, created_at, kind, replaces_json)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (pid, s, fill, set_id, cfg_id, dv, status, sig.blocked_reason, json.dumps(estimate, default=str),
-             json.dumps(checks), utcnow()))
+             json.dumps(checks), utcnow(), kind, json.dumps(replaces) if replaces else None))
         plan_id = cur.lastrowid
         cur_marks = marks_at(panel, t, symbols)
         for sym in sorted(symbols):
@@ -590,8 +711,9 @@ class PaperLedger:
                  ", ".join(f.effect.replace("_", " ") for f in fs) if fs else "Estimated not executable (see unfilled estimate)"))
         level = "warning" if status == "blocked" else "info"
         msg = (f"Rebalance BLOCKED for signal {s}: {sig.blocked_reason}" if status == "blocked" else
-               f"Rebalance plan #{plan_id} proposed from signal {s}: {len(longs)} long / {len(shorts)} short targets, "
-               f"est. turnover {est.turnover:.1%}; awaiting decision before open of {fill}")
+               f"Rebalance plan #{plan_id} {'proposed' if kind == 'month_end' else 'rebuilt (replan)'} from signal {s}: "
+               f"{len(longs)} long / {len(shorts)} short targets, est. turnover {est.turnover:.1%}; "
+               f"fills at the open of {fill}")
         log_event(conn, level, "rebalance", msg, portfolio_id=pid, session=s)
         return plan_id
 
