@@ -1412,7 +1412,7 @@
           "broker"
         ],
         "summary": "Set Rebalance Mode",
-        "description": "'approve' (default): month-end rebalance orders wait until the plan is approved on the Trading page.\n'auto': they are sent automatically. Stop-loss covers are automatic in both modes.",
+        "description": "'approve' (default): month-end rebalance orders wait until the plan is approved on the Trading page.\n'auto': they are sent automatically. Stop-loss covers are automatic in both modes.\nReturns the value as stored (read back after the write), so the UI shows what the server saved.",
         "operationId": "set_rebalance_mode_api_automation_rebalance_mode_put",
         "requestBody": {
           "content": {
@@ -1430,9 +1430,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Set Rebalance Mode Api Automation Rebalance Mode Put"
+                  "$ref": "#/components/schemas/RebalanceModeResult"
                 }
               }
             }
@@ -2397,6 +2395,17 @@
           "rebalance_mode": {
             "type": "string",
             "title": "Rebalance Mode"
+          },
+          "rebalance_mode_updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rebalance Mode Updated At"
           },
           "paper_variant": {
             "additionalProperties": {
@@ -5593,6 +5602,31 @@
           "mode"
         ],
         "title": "RebalanceModeRequest"
+      },
+      "RebalanceModeResult": {
+        "properties": {
+          "rebalance_mode": {
+            "type": "string",
+            "title": "Rebalance Mode"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rebalance_mode",
+          "updated_at"
+        ],
+        "title": "RebalanceModeResult"
       },
       "RefreshResponse": {
         "properties": {

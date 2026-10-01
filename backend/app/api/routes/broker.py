@@ -64,6 +64,7 @@ class BrokerOverview(BaseModel):
     schedule_note: str
     open_orders: int
     rebalance_mode: str
+    rebalance_mode_updated_at: str | None = None
     paper_variant: dict[str, str | None] = {}
     awaiting_approval: list["BrokerOrder"]
     awaiting_plan: "AwaitingPlan | None" = None
@@ -178,6 +179,7 @@ def overview(ctx: AppContext = Depends(get_ctx)):
         "open_orders": ctx.db.scalar("SELECT COUNT(*) FROM broker_orders WHERE status IN ('submitted','new','accepted',"
                                      "'pending_new','partially_filled','held')") or 0,
         "rebalance_mode": rebalance_mode(ctx.db),
+        "rebalance_mode_updated_at": _setting_time(ctx, "rebalance_mode"),
         "paper_variant": active_variant(ctx),
         "awaiting_approval": waiting,
         "awaiting_plan": _awaiting_plan(ctx, waiting),
@@ -219,12 +221,25 @@ class RebalanceModeRequest(BaseModel):
     mode: Literal["approve", "auto"]
 
 
-@router.put("/automation/rebalance-mode")
-def set_rebalance_mode(req: RebalanceModeRequest, ctx: AppContext = Depends(get_ctx)) -> dict:
+class RebalanceModeResult(BaseModel):
+    rebalance_mode: str             # the value read back from the database after the write
+    updated_at: str | None
+
+
+def _setting_time(ctx: AppContext, key: str) -> str | None:
+    return ctx.db.scalar("SELECT updated_at FROM app_settings WHERE key=?", (key,))
+
+
+@router.put("/automation/rebalance-mode", response_model=RebalanceModeResult)
+def set_rebalance_mode(req: RebalanceModeRequest, ctx: AppContext = Depends(get_ctx)):
     """'approve' (default): month-end rebalance orders wait until the plan is approved on the Trading page.
-    'auto': they are sent automatically. Stop-loss covers are automatic in both modes."""
+    'auto': they are sent automatically. Stop-loss covers are automatic in both modes.
+    Returns the value as stored (read back after the write), so the UI shows what the server saved."""
     set_setting(ctx.db, "rebalance_mode", req.mode)
-    return {"rebalance_mode": req.mode}
+    saved = rebalance_mode(ctx.db)
+    if saved != req.mode:
+        raise HTTPException(500, f"rebalance_mode was not saved (stored value: {saved}).")
+    return {"rebalance_mode": saved, "updated_at": _setting_time(ctx, "rebalance_mode")}
 
 
 class PlanDecisionRequest(BaseModel):

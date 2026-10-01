@@ -199,9 +199,19 @@ export function useAutomationMutations() {
       onSuccess: () => qc.invalidateQueries({ queryKey: ["broker"] }),
     }),
     rebalanceMode: useMutation({
-      mutationFn: (mode: "approve" | "auto") => api.put<{ rebalance_mode: string }>("/automation/rebalance-mode", { mode }),
-      onError,
-      onSuccess: () => qc.invalidateQueries({ queryKey: ["broker"] }),
+      mutationFn: (mode: "approve" | "auto") => api.put<S["RebalanceModeResult"]>("/automation/rebalance-mode", { mode }),
+      onError: (e: unknown) => {
+        onError(e);
+        qc.invalidateQueries({ queryKey: ["broker"] });            // show the server's actual value again
+      },
+      onSuccess: (r) => {
+        // Display exactly what the server stored (read back after the write), then refresh everything else.
+        qc.setQueryData<S["BrokerOverview"]>(["broker"], (old) =>
+          old ? { ...old, rebalance_mode: r.rebalance_mode, rebalance_mode_updated_at: r.updated_at } : old);
+        notifications.show({ color: "teal", title: "Rebalance mode saved",
+          message: `Server now has rebalance_mode = ${r.rebalance_mode}${r.updated_at ? ` (saved ${r.updated_at})` : ""}.` });
+        qc.invalidateQueries({ queryKey: ["broker"] });
+      },
     }),
     approve: useMutation({
       mutationFn: (d: PlanDecision) =>

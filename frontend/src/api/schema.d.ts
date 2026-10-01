@@ -608,6 +608,7 @@ export interface paths {
          * Set Rebalance Mode
          * @description 'approve' (default): month-end rebalance orders wait until the plan is approved on the Trading page.
          *     'auto': they are sent automatically. Stop-loss covers are automatic in both modes.
+         *     Returns the value as stored (read back after the write), so the UI shows what the server saved.
          */
         put: operations["set_rebalance_mode_api_automation_rebalance_mode_put"];
         post?: never;
@@ -980,6 +981,8 @@ export interface components {
             open_orders: number;
             /** Rebalance Mode */
             rebalance_mode: string;
+            /** Rebalance Mode Updated At */
+            rebalance_mode_updated_at?: string | null;
             /**
              * Paper Variant
              * @default {}
@@ -1870,6 +1873,13 @@ export interface components {
              * @enum {string}
              */
             mode: "approve" | "auto";
+        };
+        /** RebalanceModeResult */
+        RebalanceModeResult: {
+            /** Rebalance Mode */
+            rebalance_mode: string;
+            /** Updated At */
+            updated_at: string | null;
         };
         /** RefreshResponse */
         RefreshResponse: {
@@ -3944,9 +3954,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RebalanceModeResult"];
                 };
             };
             /** @description Validation Error */

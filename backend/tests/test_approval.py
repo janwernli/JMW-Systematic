@@ -90,7 +90,7 @@ def test_declined_plan_is_never_sent_even_in_auto_mode(tmp_path, no_background_c
         r = c.post(f"/api/broker/plans/{ap['plan_id']}/decline", json={"expected_orders": ap["orders"]})
         assert r.status_code == 200 and r.json()["declined"] == ap["orders"]
         assert no_background_cycle == []                                 # declining sends nothing
-        assert c.put("/api/automation/rebalance-mode", json={"mode": "auto"}).json() == {"rebalance_mode": "auto"}
+        assert c.put("/api/automation/rebalance-mode", json={"mode": "auto"}).json()["rebalance_mode"] == "auto"
         assert c.put("/api/automation/rebalance-mode", json={"mode": "manual"}).status_code == 422
     DailyCycle(ctx, fb, now_fn=lambda: now + timedelta(minutes=5)).run()
     assert fb.submits == []                                              # the declined plan is not regenerated
@@ -136,3 +136,30 @@ def test_migration_0005_renames_setting_and_carries_decisions(tmp_path, monkeypa
     assert conn.execute("SELECT COUNT(*) FROM app_settings WHERE key='rebalance_approval'").fetchone() == (0,)
     decisions = dict(conn.execute("SELECT plan_id, decision FROM broker_plan_decisions").fetchall())
     assert decisions == {7: "approved", 8: "declined"}    # plan 9 is still undecided
+
+
+def test_rebalance_mode_toggle_persists_and_returns_the_saved_value(tmp_path, monkeypatch):
+    """Regression: the Trading page's Approve/Auto control must persist, and the UI shows what the server stored."""
+    fb = FakeBroker()
+    ctx, *_ = make_ctx(tmp_path, fb, mode=None)                          # fresh DB: default 'approve'
+    stored = lambda: ctx.db.query_one("SELECT value, updated_at FROM app_settings WHERE key='rebalance_mode'")  # noqa: E731
+    assert stored()["value"] == "approve"
+    with TestClient(create_app(ctx.settings, ctx=ctx)) as c:
+        r = c.put("/api/automation/rebalance-mode", json={"mode": "auto"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["rebalance_mode"] == "auto" and body["updated_at"] == stored()["updated_at"]   # read back from DB
+        assert stored()["value"] == "auto"                                                       # persisted
+        ov = c.get("/api/broker/overview").json()
+        assert ov["rebalance_mode"] == "auto" and ov["rebalance_mode_updated_at"] == body["updated_at"]
+        assert rebalance_mode(ctx.db) == "auto"                          # what the daily cycle will use
+        # invalid values are rejected and change nothing
+        assert c.put("/api/automation/rebalance-mode", json={"mode": "Auto"}).status_code == 422
+        assert stored()["value"] == "auto"
+        # back to approve
+        assert c.put("/api/automation/rebalance-mode", json={"mode": "approve"}).json()["rebalance_mode"] == "approve"
+        assert stored()["value"] == "approve"
+        # a write that does not stick is reported as an error, never as success
+        monkeypatch.setattr(broker_routes, "set_setting", lambda db, key, value: None)
+        r = c.put("/api/automation/rebalance-mode", json={"mode": "auto"})
+        assert r.status_code == 500 and "not saved" in r.json()["message"] and stored()["value"] == "approve"

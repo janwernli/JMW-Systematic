@@ -71,9 +71,16 @@ export function Trading() {
               <Tooltip multiline w={300} label="Approve (default): each month-end rebalance waits here until you approve the whole plan. Auto: it is sent without asking. Stop-loss covers are automatic in both modes.">
                 <Text size="xs">Rebalance mode</Text>
               </Tooltip>
-              <SegmentedControl size="xs" value={data.rebalance_mode} onChange={(v) => m.rebalanceMode.mutate(v as "approve" | "auto")}
+              <SegmentedControl size="xs" disabled={m.rebalanceMode.isPending}
+                value={m.rebalanceMode.isPending && m.rebalanceMode.variables ? m.rebalanceMode.variables : data.rebalance_mode}
+                onChange={(v) => m.rebalanceMode.mutate(v as "approve" | "auto")}
                 data={[{ value: "approve", label: "Approve" }, { value: "auto", label: "Auto" }]} />
             </Group>
+            <Text size="10px" c={m.rebalanceMode.isError ? "red.4" : "dimmed"} ta="right" mt={-4} data-testid="rebalance-mode-saved">
+              {m.rebalanceMode.isPending ? "Saving…"
+                : m.rebalanceMode.isError ? `Not saved: ${String((m.rebalanceMode.error as Error)?.message ?? "request failed")}. Server value: ${data.rebalance_mode}.`
+                : `Saved on server: ${data.rebalance_mode === "auto" ? "Auto" : "Approve"}${data.rebalance_mode_updated_at ? ` · ${fmtTs(data.rebalance_mode_updated_at)}` : ""}`}
+            </Text>
             <KV rows={[
               ["BROKER_TRADING_ENABLED (.env)", data.trading_enabled_env ? <span className="up">true</span> : <span className="warn">false</span>],
               ["Orders will be sent", !trading ? <span className="warn">no (planned only)</span>
